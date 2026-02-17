@@ -1,0 +1,16 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Generated images
+*.png
+*.jpg
+!image.jpg
+
+# Model cache
+.cache/
