@@ -29,6 +29,6 @@ def inpaint_image(input_image, mask_image, prompt):
     print("Image generated, saving...")
     # Save the generated image
     image.save('inpainted_output.png')
-    print("✓ Successfully saved inpainted_output.png")
+    print("Successfully saved inpainted_output.png")
     
     return image

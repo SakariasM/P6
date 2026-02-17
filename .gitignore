@@ -10,7 +10,7 @@ venv/
 # Generated images
 *.png
 *.jpg
-!image.jpg
+!image.png
 
 # Model cache
 .cache/

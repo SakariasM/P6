@@ -24,22 +24,42 @@
    This will install numpy, opencv-python, matplotlib, torch, diffusers, transformers, pillow, and accelerate.
 
 4. **Add your input image**
-   - Place your image in the project directory as `image.jpg`
+   - Place your image in the project directory as `image.png`
    - The image should contain an object you want to keep with a background you want to replace
 
 5. **Run the program**
    ```bash
-   python main.py
+   python main.py "your prompt here"
+   ```
+   
+   Example:
+   ```bash
+   python main.py "A pirate ship sailing on the ocean"
    ```
 
 ## Usage
 
-### Customizing the Prompt
+### Basic Usage
 
-Edit [main.py](main.py) to change the inpainting prompt:
+Run the program with a text prompt describing what you want the background to be:
 
-```python
-inpainting.inpaint_image(input_image, mask_image, "A pirate ship")  # Change this text
+```bash
+python main.py "A pirate ship"
+```
+
+Example prompts:
+```bash
+python main.py "A snowy mountain landscape"
+python main.py "A tropical beach at sunset"
+python main.py "A futuristic city skyline"
+```
+
+### Get Help
+
+To see all available options:
+
+```bash
+python main.py --help
 ```
 
 ### Output Files
