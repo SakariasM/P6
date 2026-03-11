@@ -6,11 +6,23 @@ __pycache__/
 # Virtual environment
 .venv/
 venv/
+env/
+
+# Claude
+.claude/
 
 # Generated images
 *.png
 *.jpg
+*.mp4
 !image.jpg
 
 # Model cache
 .cache/
+
+# Model files
+*.pt
+*.onnx
+*.tflite
+*.npy
+*_saved_model/
