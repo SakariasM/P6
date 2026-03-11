@@ -1,11 +1,6 @@
+# Full dev environment (model export + inference)
 numpy
 opencv-python
-matplotlib
-torch
-diffusers==0.30.0
-transformers==4.45.0
-pillow
-accelerate
 ultralytics
 ai-edge-litert
 tensorflow

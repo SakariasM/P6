@@ -33,8 +33,55 @@ MASK_DILATE    = 10      # expand mask outward to cover person edges
 MASK_BLUR      = 1      # feather mask edges for smooth blending (must be odd)
 BG_LEARN       = 0.02    # background learning rate (higher = adapts faster)
 MASK_EDGE_PAD  = 50      # if mask is within this many px of top/bottom, extend to edge
-MODEL_PATH     = "yolo26n-seg_saved_model/yolo26n-seg_float32.tflite"
+MODEL          = "yolo26n-seg"  # model name — auto-downloads and exports if missing
+MODEL_IMGSZ    = 320            # inference resolution used when exporting the model
+MODEL_PATH     = f"models/{MODEL}/{MODEL}_float32.tflite"
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def ensure_model():
+    """Auto-download and export MODEL_PATH from the corresponding .pt if missing.
+    Models are stored in models/{model_name}/ and temp export files are cleaned up."""
+    if os.path.exists(MODEL_PATH):
+        return
+
+    import shutil
+
+    # Derive model name from path: "models/yolo26n-seg/yolo26n-seg_float32.tflite"
+    #                            → "yolo26n-seg"
+    model_name = os.path.basename(os.path.dirname(MODEL_PATH))  # "yolo26n-seg"
+    pt_path    = f"{model_name}.pt"
+    out_dir    = os.path.dirname(MODEL_PATH)                     # "models/yolo26n-seg"
+    tflite_filename = os.path.basename(MODEL_PATH)               # "yolo26n-seg_float32.tflite"
+
+    # Paths that ultralytics creates during export (in cwd)
+    tmp_saved_model = f"{model_name}_saved_model"
+    tmp_tflite      = os.path.join(tmp_saved_model, tflite_filename)
+    tmp_onnx        = f"{model_name}.onnx"
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    print(f"[setup] Model not found: {MODEL_PATH}")
+    print(f"[setup] Downloading {pt_path}…")
+    try:
+        from ultralytics import YOLO
+        model = YOLO(pt_path)  # triggers auto-download with progress bar if needed
+
+        print(f"[setup] Exporting to TFLite at {MODEL_IMGSZ}×{MODEL_IMGSZ} — this takes ~1 minute…")
+        model.export(format="tflite", imgsz=MODEL_IMGSZ)
+
+        print(f"[setup] Moving model to {out_dir}/…")
+        shutil.move(tmp_tflite, MODEL_PATH)
+
+        print(f"[setup] Cleaning up temporary export files…")
+        shutil.rmtree(tmp_saved_model, ignore_errors=True)
+        if os.path.exists(tmp_onnx):
+            os.remove(tmp_onnx)
+
+        print(f"[setup] Ready — {MODEL_PATH}")
+    except Exception as e:
+        print(f"[setup] ERROR: {e}")
+        raise
 
 
 # ── shared-memory helpers ─────────────────────────────────────────────────────
@@ -258,6 +305,7 @@ def _parse_args():
 
 def main():
     args = _parse_args()
+    ensure_model()
 
     # -- determine source --
     source = args.input if args.input else SOURCE
