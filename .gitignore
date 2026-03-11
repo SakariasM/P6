@@ -21,8 +21,3 @@ env/
 .cache/
 
 # Model files
-*.pt
-*.onnx
-*.tflite
-*.npy
-*_saved_model/
