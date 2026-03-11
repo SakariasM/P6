@@ -8,3 +8,4 @@ pillow
 accelerate
 ultralytics
 ai-edge-litert
+tensorflow
