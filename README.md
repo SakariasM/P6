@@ -23,13 +23,14 @@ Goal: 70% mAP & minimun 24 fps on RPi5.
 
 6. Implement inference engine in c++ (some already exists).
 
+```
              *     ,MMM8&&&.            *
                   MMMM88&&&&&    .
                  MMMM88&&&&&&&
      *           MMM88&&&&&&&&
                  MMM88&&&&&&&&
                  'MMM88&&&&&&'
-                   'MMM8&&&'      *    
+                   'MMM8&&&'      *
            /\/|_      __/\\
           /    -\    /-   ~\  .              '
           \    = Y =T_ =   /
@@ -44,3 +45,4 @@ Goal: 70% mAP & minimun 24 fps on RPi5.
   |  |  |  | )_) |  |  |  |))|  |  |  |  |  |
   |  |  |  |  |  |  |  |  (/ |  |  |  |  |  |
   |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+```
