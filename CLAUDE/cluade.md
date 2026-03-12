@@ -8,12 +8,12 @@ The overall plan:
 
 Goal: 70% mAP & minimun 24 fps on RPi5.
 
-1. create a program which can save the teacher inference results from yolo26n (predictions.py).
+1. create a program which can save the teacher inference results from yolo26n (predictions.py). 
 
-2. Benchmark teacher model
+2. Benchmark teacher model, 
 
 
-3. find a suitable dataset for training and validation.
+3. find a suitable dataset for training and validation. Good performance: 20,000-50,000 images.
 
 4. Create a custom lightweight cnn student model that can distill from the results of   yolo26n using response-level distillation. (also design distillation loss, KL divergence + hard label loss)
 
