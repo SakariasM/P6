@@ -21,6 +21,7 @@ Keys:  q — quit   d — toggle debug mask overlay   r — toggle recording (li
 import argparse
 import cv2
 import os
+import sys
 import time
 import multiprocessing as mp
 import numpy as np
@@ -77,11 +78,24 @@ def ensure_model():
         shutil.rmtree(tmp_saved_model, ignore_errors=True)
         if os.path.exists(tmp_onnx):
             os.remove(tmp_onnx)
+        if os.path.exists(pt_path):
+            os.remove(pt_path)
+        for f in os.listdir("."):
+            if f.startswith("calibration_image") and f.endswith(".npy"):
+                os.remove(f)
 
         print(f"[setup] Ready — {MODEL_PATH}")
     except Exception as e:
-        print(f"[setup] ERROR: {e}")
-        raise
+        # Clean up any partial export files
+        shutil.rmtree(tmp_saved_model, ignore_errors=True)
+        if os.path.exists(tmp_onnx):
+            os.remove(tmp_onnx)
+        print(f"\n[setup] WARNING: Could not export '{model_name}'.")
+        print(f"[setup] This is likely because TensorFlow is not supported on this Python version.")
+        print(f"[setup] Export the model on a PC and copy models/ to this machine:")
+        print(f"[setup]   scp -r models/ user@<this-machine-ip>:{os.getcwd()}/")
+        print(f"[setup] Exiting.\n")
+        sys.exit(1)
 
 
 # ── shared-memory helpers ─────────────────────────────────────────────────────
@@ -175,6 +189,7 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
         for od in out_details:
             if len(od["shape"]) == 3:
                 det_idx = od["index"]
+                det_shape = od["shape"]
             elif len(od["shape"]) == 4:
                 proto_idx = od["index"]
                 _, proto_h, proto_w, n_proto = od["shape"]  # TFLite is channel-last (H, W, C)
@@ -182,8 +197,19 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
         if det_idx is None or proto_idx is None:
             raise RuntimeError(f"Unexpected output shapes: {[od['shape'] for od in out_details]}")
 
+        # Detect output format:
+        #   Post-NMS (yolo26+): (1, n_dets, 38)  — last dim is small (conf+cls+coeffs)
+        #   Raw (yolov8):       (1, 116, 2100)    — last dim is large (num anchors)
+        raw_format = det_shape[2] > det_shape[1]
+        if raw_format:
+            n_classes = det_shape[1] - 4 - n_proto   # e.g. 116 - 4 - 32 = 80
+            fmt = f"raw (features×anchors={det_shape[1]}×{det_shape[2]}, {n_classes} classes)"
+        else:
+            n_classes = None
+            fmt = f"post-NMS (dets×features={det_shape[1]}×{det_shape[2]})"
+
         print(f"[worker] model loaded OK — input {model_w}×{model_h}, "
-              f"prototypes {proto_w}×{proto_h}×{n_proto}")
+              f"prototypes {proto_w}×{proto_h}×{n_proto}, format: {fmt}")
     except Exception as exc:
         print(f"[worker] FAILED to load model: {exc}")
         import traceback; traceback.print_exc()
@@ -226,18 +252,22 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
             interp.set_tensor(inp_idx, input_data)
             interp.invoke()
 
-            detections = interp.get_tensor(det_idx)[0]   # (300, 38)
-            prototypes = interp.get_tensor(proto_idx)[0] # (32, proto_h, proto_w)
-
-            # Filter: confidence > threshold AND class == 0 (person)
-            confs   = detections[:, 4]
-            classes = detections[:, 5].astype(int)
-            valid   = (confs > MASK_THRESHOLD) & (classes == 0)
+            detections = interp.get_tensor(det_idx)[0]   # post-NMS: (300,38) | raw: (116,2100)
+            prototypes = interp.get_tensor(proto_idx)[0] # (proto_h, proto_w, 32)
 
             small_mask = np.zeros((proto_h, proto_w), dtype=np.uint8)
 
+            if raw_format:
+                # yolov8 raw: (116, 2100) → transpose to (anchors, features)
+                preds  = detections.T                            # (2100, 116)
+                valid  = preds[:, 4] > MASK_THRESHOLD           # class 0 = person
+                coeffs = preds[valid, 4 + n_classes:]           # (N, 32)
+            else:
+                # yolo26 post-NMS: (300, 38) — conf+cls+coeffs already separated
+                valid  = (detections[:, 4] > MASK_THRESHOLD) & (detections[:, 5].astype(int) == 0)
+                coeffs = detections[valid, 6:]                  # (N, 32)
+
             if valid.any():
-                coeffs = detections[valid, 6:]                       # (N, 32)
                 np.copyto(proto_flat_buf, prototypes.reshape(-1, n_proto))  # (6400, 32)
                 logits = coeffs @ proto_flat_buf.T                   # (N, 6400)
                 # sigmoid
