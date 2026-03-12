@@ -28,15 +28,16 @@ import numpy as np
 from multiprocessing import shared_memory
 
 # ── config ────────────────────────────────────────────────────────────────────
-SOURCE         = 0       # webcam index, or path to a video file
-MASK_THRESHOLD = 0.3     # segmentation confidence (0–1, lower = more aggressive)
-MASK_DILATE    = 10      # expand mask outward to cover person edges
-MASK_BLUR      = 1      # feather mask edges for smooth blending (must be odd)
-BG_LEARN       = 0.02    # background learning rate (higher = adapts faster)
-MASK_EDGE_PAD  = 50      # if mask is within this many px of top/bottom, extend to edge
-MODEL          = "yolo26n-seg"  # model name — auto-downloads and exports if missing
-MODEL_IMGSZ    = 320            # inference resolution used when exporting the model
-MODEL_PATH     = f"models/{MODEL}/{MODEL}_float32.tflite"
+SOURCE         = 0                # webcam index, or path to a video file
+MASK_THRESHOLD = 0.3              # segmentation confidence (0–1, lower = more aggressive)
+MASK_DILATE    = 10               # expand mask outward to cover person edges
+MASK_BLUR      = 1                # feather mask edges for smooth blending (must be odd)
+BG_LEARN       = 0.02             # background learning rate (higher = adapts faster)
+MASK_EDGE_PAD  = 50               # if mask is within this many px of top/bottom, extend to edge
+MODEL          = "selfie_segmenter"    # model name — auto-downloads and exports if missing
+                                  # use "selfie_segmenter" for the lightweight TFLite model
+MODEL_IMGSZ    = 320              # inference resolution used when exporting YOLO models
+MODEL_PATH     = f"models/{MODEL}/{MODEL}.tflite" if MODEL == "selfie_segmenter" else f"models/{MODEL}/{MODEL}_float32.tflite"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -48,19 +49,31 @@ def ensure_model():
 
     import shutil
 
-    # Derive model name from path: "models/yolo26n-seg/yolo26n-seg_float32.tflite"
-    #                            → "yolo26n-seg"
-    model_name = os.path.basename(os.path.dirname(MODEL_PATH))  # "yolo26n-seg"
-    pt_path    = f"{model_name}.pt"
-    out_dir    = os.path.dirname(MODEL_PATH)                     # "models/yolo26n-seg"
-    tflite_filename = os.path.basename(MODEL_PATH)               # "yolo26n-seg_float32.tflite"
+    model_name = os.path.basename(os.path.dirname(MODEL_PATH))
+    out_dir    = os.path.dirname(MODEL_PATH)
+    os.makedirs(out_dir, exist_ok=True)
 
-    # Paths that ultralytics creates during export (in cwd)
+    # selfie_segmenter is not a YOLO model — look for it in common locations
+    if MODEL == "selfie_segmenter":
+        search_paths = [
+            os.path.expanduser("~/Downloads/selfie_segmenter.tflite"),
+            "selfie_segmenter.tflite",
+        ]
+        for src in search_paths:
+            if os.path.exists(src):
+                shutil.copy(src, MODEL_PATH)
+                print(f"[setup] Copied selfie_segmenter.tflite → {MODEL_PATH}")
+                return
+        print(f"\n[setup] WARNING: selfie_segmenter.tflite not found.")
+        print(f"[setup] Download it from MediaPipe and place it in ~/Downloads/ or the project folder.")
+        print(f"[setup] Exiting.\n")
+        sys.exit(1)
+
+    pt_path         = f"{model_name}.pt"
+    tflite_filename = os.path.basename(MODEL_PATH)
     tmp_saved_model = f"{model_name}_saved_model"
     tmp_tflite      = os.path.join(tmp_saved_model, tflite_filename)
     tmp_onnx        = f"{model_name}.onnx"
-
-    os.makedirs(out_dir, exist_ok=True)
 
     print(f"[setup] Model not found: {MODEL_PATH}")
     print(f"[setup] Downloading {pt_path}…")
@@ -184,32 +197,44 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
         inp_idx = inp_detail["index"]
         _, model_h, model_w, _ = inp_detail["shape"]
 
-        # Identify outputs by rank: 3-D = detections, 4-D = prototypes
+        # Detect model type by output shapes:
+        #   Selfie segmenter: single output (1, H, W, 1) — direct mask
+        #   YOLO post-NMS:    (1, n_dets, 38) + (1, H, W, 32)
+        #   YOLO raw:         (1, 116, 2100)  + (1, H, W, 32)
         det_idx, proto_idx = None, None
-        for od in out_details:
-            if len(od["shape"]) == 3:
-                det_idx = od["index"]
-                det_shape = od["shape"]
-            elif len(od["shape"]) == 4:
-                proto_idx = od["index"]
-                _, proto_h, proto_w, n_proto = od["shape"]  # TFLite is channel-last (H, W, C)
+        selfie_idx = None
+        det_shape = None
+        proto_h = proto_w = n_proto = None
 
-        if det_idx is None or proto_idx is None:
-            raise RuntimeError(f"Unexpected output shapes: {[od['shape'] for od in out_details]}")
-
-        # Detect output format:
-        #   Post-NMS (yolo26+): (1, n_dets, 38)  — last dim is small (conf+cls+coeffs)
-        #   Raw (yolov8):       (1, 116, 2100)    — last dim is large (num anchors)
-        raw_format = det_shape[2] > det_shape[1]
-        if raw_format:
-            n_classes = det_shape[1] - 4 - n_proto   # e.g. 116 - 4 - 32 = 80
-            fmt = f"raw (features×anchors={det_shape[1]}×{det_shape[2]}, {n_classes} classes)"
+        if len(out_details) == 1 and len(out_details[0]["shape"]) == 4:
+            # selfie_segmenter: single (1, H, W, 1) output
+            selfie_idx = out_details[0]["index"]
+            fmt = "selfie_segmenter"
         else:
-            n_classes = None
-            fmt = f"post-NMS (dets×features={det_shape[1]}×{det_shape[2]})"
+            for od in out_details:
+                if len(od["shape"]) == 3:
+                    det_idx   = od["index"]
+                    det_shape = od["shape"]
+                elif len(od["shape"]) == 4:
+                    proto_idx = od["index"]
+                    _, proto_h, proto_w, n_proto = od["shape"]
 
-        print(f"[worker] model loaded OK — input {model_w}×{model_h}, "
-              f"prototypes {proto_w}×{proto_h}×{n_proto}, format: {fmt}")
+            if det_idx is None or proto_idx is None:
+                raise RuntimeError(f"Unexpected output shapes: {[od['shape'] for od in out_details]}")
+
+            raw_format = det_shape[2] > det_shape[1]
+            if raw_format:
+                n_classes = det_shape[1] - 4 - n_proto
+                fmt = f"raw (features×anchors={det_shape[1]}×{det_shape[2]}, {n_classes} classes)"
+            else:
+                n_classes = None
+                fmt = f"post-NMS (dets×features={det_shape[1]}×{det_shape[2]})"
+
+        if selfie_idx is not None:
+            print(f"[worker] model loaded OK — input {model_w}×{model_h}, format: {fmt}")
+        else:
+            print(f"[worker] model loaded OK — input {model_w}×{model_h}, "
+                  f"prototypes {proto_w}×{proto_h}×{n_proto}, format: {fmt}")
     except Exception as exc:
         print(f"[worker] FAILED to load model: {exc}")
         import traceback; traceback.print_exc()
@@ -222,16 +247,18 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
     h, w = frame_shape[:2]
     mask_buf  = _np_from_shm(shm_mask, (h, w))
 
-    # Post-process kernels scaled to prototype resolution
-    scale = proto_h / h
+    # Post-process kernels — scale to whichever resolution the mask is built at
+    mask_res_h = model_h if selfie_idx is not None else proto_h
+    mask_res_w = model_w if selfie_idx is not None else proto_w
+    scale = mask_res_h / h
     small_dilate = max(3, int(MASK_DILATE * scale) | 1)
     small_blur   = max(3, int(MASK_BLUR   * scale) | 1)
     dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (small_dilate, small_dilate))
-    print(f"[worker] post-process at {proto_w}×{proto_h}: "
+    print(f"[worker] post-process at {mask_res_w}×{mask_res_h}: "
           f"dilate {small_dilate}×{small_dilate}, blur {small_blur}×{small_blur}")
 
     input_data = np.empty((1, model_h, model_w, 3), dtype=np.float32)
-    proto_flat_buf = np.empty((proto_h * proto_w, n_proto), dtype=np.float32)  # (6400, 32)
+    proto_flat_buf = None if selfie_idx is not None else np.empty((proto_h * proto_w, n_proto), dtype=np.float32)
 
     frame_interval = 1.0 / max(cam_fps, 1.0)
 
@@ -252,32 +279,33 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
             interp.set_tensor(inp_idx, input_data)
             interp.invoke()
 
-            detections = interp.get_tensor(det_idx)[0]   # post-NMS: (300,38) | raw: (116,2100)
-            prototypes = interp.get_tensor(proto_idx)[0] # (proto_h, proto_w, 32)
-
-            small_mask = np.zeros((proto_h, proto_w), dtype=np.uint8)
-
-            if raw_format:
-                # yolov8 raw: (116, 2100) → transpose to (anchors, features)
-                preds  = detections.T                            # (2100, 116)
-                valid  = preds[:, 4] > MASK_THRESHOLD           # class 0 = person
-                coeffs = preds[valid, 4 + n_classes:]           # (N, 32)
+            if selfie_idx is not None:
+                # selfie_segmenter: direct (1, H, W, 1) mask output
+                raw = interp.get_tensor(selfie_idx)[0, :, :, 0]      # (model_h, model_w)
+                small_mask = (raw > MASK_THRESHOLD).astype(np.uint8) * 255
             else:
-                # yolo26 post-NMS: (300, 38) — conf+cls+coeffs already separated
-                valid  = (detections[:, 4] > MASK_THRESHOLD) & (detections[:, 5].astype(int) == 0)
-                coeffs = detections[valid, 6:]                  # (N, 32)
+                detections = interp.get_tensor(det_idx)[0]            # post-NMS or raw
+                prototypes = interp.get_tensor(proto_idx)[0]          # (proto_h, proto_w, 32)
+                small_mask = np.zeros((proto_h, proto_w), dtype=np.uint8)
 
-            if valid.any():
-                np.copyto(proto_flat_buf, prototypes.reshape(-1, n_proto))  # (6400, 32)
-                logits = coeffs @ proto_flat_buf.T                   # (N, 6400)
-                # sigmoid
-                person_masks = 1.0 / (1.0 + np.exp(-logits))    # (N, proto_h*proto_w)
-                combined = person_masks.max(axis=0).reshape(proto_h, proto_w)
-                small_mask = (combined > 0.5).astype(np.uint8) * 255
+                if raw_format:
+                    preds  = detections.T
+                    valid  = preds[:, 4] > MASK_THRESHOLD
+                    coeffs = preds[valid, 4 + n_classes:]
+                else:
+                    valid  = (detections[:, 4] > MASK_THRESHOLD) & (detections[:, 5].astype(int) == 0)
+                    coeffs = detections[valid, 6:]
 
-                if small_mask.any():
-                    small_mask = cv2.dilate(small_mask, dilate_kernel, iterations=2)
-                    small_mask = cv2.GaussianBlur(small_mask, (small_blur, small_blur), 0)
+                if valid.any():
+                    np.copyto(proto_flat_buf, prototypes.reshape(-1, n_proto))
+                    logits       = coeffs @ proto_flat_buf.T
+                    person_masks = 1.0 / (1.0 + np.exp(-logits))
+                    combined     = person_masks.max(axis=0).reshape(proto_h, proto_w)
+                    small_mask   = (combined > 0.5).astype(np.uint8) * 255
+
+            if small_mask.any():
+                small_mask = cv2.dilate(small_mask, dilate_kernel, iterations=2)
+                small_mask = cv2.GaussianBlur(small_mask, (small_blur, small_blur), 0)
 
             # Upscale to frame resolution
             mask = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
