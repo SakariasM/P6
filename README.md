@@ -10,6 +10,15 @@ source .venv/bin/activate
 python3 predictions.py --model yolo26n-seg.pt --input ../test_data/sample/ --output ../results --format pickle
 
 
+# For COCO training set (118K images)
+python src/download_dataset.py --dataset coco --split train2017 --output data
+
+# For Open Images (10K images)
+python src/download_dataset.py --dataset open-images --num-images 10000 --output data
+
+# For custom URLs
+python src/download_dataset.py --dataset custom --url-file image_urls.txt --output data
+
 The goal of this project is to distill a model from yolo26n which is optimized for detecting humans on low powered hardware such as a raspberry pi 5.
 
 
