@@ -102,7 +102,8 @@ class YOLOTeacherInference:
             iou=self.iou_threshold,
             device=self.device,
             save=False,
-            verbose=False
+            verbose=False,
+            half=True if self.device == "cuda" else False  # FP16 for faster GPU inference
         )
 
         if save_predictions:
