@@ -29,7 +29,7 @@ logs/
 .idea/
 *.swp
 *.swo
-
+CLAUDE/
 # OS
 .DS_Store
 
