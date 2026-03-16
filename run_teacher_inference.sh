@@ -53,19 +53,30 @@ mkdir -p "$DATA_DIR" "$RESULTS_DIR"
 echo ""
 echo "=== Step 1: Checking Dependencies ==="
 singularity exec --nv "$CONTAINER" bash -c "
-    # Check if ultralytics is already installed
-    if python -c 'import ultralytics' 2>/dev/null; then
-        echo '✓ ultralytics already installed'
+    # Check if ultralytics works properly (not just installed)
+    if python -c 'import ultralytics; import cv2' 2>/dev/null; then
+        echo '✓ ultralytics and opencv already working'
     else
-        echo 'Installing ultralytics...'
-        pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null || true
-        pip install --user --no-cache-dir opencv-python-headless
+        echo 'Installing/fixing dependencies...'
+
+        # Aggressively remove all opencv variants
+        pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless 2>/dev/null || true
+        rm -rf ~/.local/lib/python3.*/site-packages/cv2* 2>/dev/null || true
+        rm -rf ~/.cache/pip 2>/dev/null || true
+
+        # Install clean versions
+        pip install --user --no-cache-dir --force-reinstall opencv-python-headless
         pip install --user --no-cache-dir ultralytics tqdm
     fi
 
     echo ''
     echo 'Installed packages:'
     pip list | grep -E 'ultralytics|opencv|torch' || echo 'Package list unavailable'
+
+    echo ''
+    echo 'Testing imports...'
+    python -c 'import cv2; print(f\"OpenCV: {cv2.__version__}\")'
+    python -c 'import ultralytics; print(f\"Ultralytics: {ultralytics.__version__}\")'
 "
 
 # Step 2: Download dataset (images only, no annotations)
