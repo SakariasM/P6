@@ -57,10 +57,14 @@ echo "=== Step 1: Checking Dependencies ==="
 export OPENCV_IO_ENABLE_OPENEXR=0
 export QT_QPA_PLATFORM=offscreen
 
-singularity exec --nv "$CONTAINER" bash -c "
+singularity exec --nv \
+    --bind /usr/lib/x86_64-linux-gnu:/host-libs \
+    --env LD_LIBRARY_PATH="/host-libs:\$LD_LIBRARY_PATH" \
+    "$CONTAINER" bash -c "
     # Set headless environment variables
     export OPENCV_IO_ENABLE_OPENEXR=0
     export QT_QPA_PLATFORM=offscreen
+    export LD_LIBRARY_PATH=\"/host-libs:\$LD_LIBRARY_PATH\"
 
     # Check if ultralytics works properly (not just installed)
     if python -c 'import os; os.environ[\"OPENCV_IO_ENABLE_OPENEXR\"]=\"0\"; import ultralytics; import cv2' 2>/dev/null; then
