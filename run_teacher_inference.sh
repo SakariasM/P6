@@ -52,20 +52,29 @@ mkdir -p "$DATA_DIR" "$RESULTS_DIR"
 # Step 1: Install additional dependencies inside container (if needed)
 echo ""
 echo "=== Step 1: Checking Dependencies ==="
+
+# Set environment to disable OpenCV GUI features (headless mode)
+export OPENCV_IO_ENABLE_OPENEXR=0
+export QT_QPA_PLATFORM=offscreen
+
 singularity exec --nv "$CONTAINER" bash -c "
+    # Set headless environment variables
+    export OPENCV_IO_ENABLE_OPENEXR=0
+    export QT_QPA_PLATFORM=offscreen
+
     # Check if ultralytics works properly (not just installed)
-    if python -c 'import ultralytics; import cv2' 2>/dev/null; then
+    if python -c 'import os; os.environ[\"OPENCV_IO_ENABLE_OPENEXR\"]=\"0\"; import ultralytics; import cv2' 2>/dev/null; then
         echo '✓ ultralytics and opencv already working'
     else
         echo 'Installing/fixing dependencies...'
 
-        # Aggressively remove all opencv variants
+        # Remove all opencv variants
         pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless 2>/dev/null || true
         rm -rf ~/.local/lib/python3.*/site-packages/cv2* 2>/dev/null || true
         rm -rf ~/.cache/pip 2>/dev/null || true
 
-        # Install clean versions
-        pip install --user --no-cache-dir --force-reinstall opencv-python-headless
+        # Install opencv-python (required by ultralytics) but configure for headless
+        pip install --user --no-cache-dir opencv-python
         pip install --user --no-cache-dir ultralytics tqdm
     fi
 
@@ -104,6 +113,8 @@ if [ "$SKIP_DOWNLOAD" != "true" ]; then
     echo "Downloading COCO val2017 dataset..."
     singularity exec --nv \
         --bind "$PROJECT_DIR:$PROJECT_DIR" \
+        --bind /usr/lib/x86_64-linux-gnu:/host-libs \
+        --env LD_LIBRARY_PATH="/host-libs:\$LD_LIBRARY_PATH" \
         "$CONTAINER" \
         python "$PROJECT_DIR/src/download_dataset.py" \
             --dataset coco \
@@ -114,8 +125,17 @@ fi
 # Step 3: Run teacher model inference
 echo ""
 echo "=== Step 3: Running Teacher Model Inference ==="
+
+# Set headless environment for opencv
+export OPENCV_IO_ENABLE_OPENEXR=0
+export QT_QPA_PLATFORM=offscreen
+
 singularity exec --nv \
     --bind "$PROJECT_DIR:$PROJECT_DIR" \
+    --bind /usr/lib/x86_64-linux-gnu:/host-libs \
+    --env LD_LIBRARY_PATH="/host-libs:\$LD_LIBRARY_PATH" \
+    --env OPENCV_IO_ENABLE_OPENEXR=0 \
+    --env QT_QPA_PLATFORM=offscreen \
     "$CONTAINER" \
     python "$PROJECT_DIR/src/predictions.py" \
         --model yolo26n-seg.pt \
