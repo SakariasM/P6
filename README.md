@@ -1,6 +1,15 @@
 HUMAN DETECTION MODEL ON EDGE DEVICES (raspberry pi 5)
 
 
+usage:
+
+python -m venv .
+
+source .venv/bin/activate
+
+python3 predictions.py --model yolo26n-seg.pt --input ../test_data/sample/ --output ../results --format pickle
+
+
 The goal of this project is to distill a model from yolo26n which is optimized for detecting humans on low powered hardware such as a raspberry pi 5.
 
 
