@@ -53,29 +53,31 @@ mkdir -p "$DATA_DIR" "$RESULTS_DIR"
 echo ""
 echo "=== Step 1: Checking Dependencies ==="
 
-# Don't use opencv-python, use opencv-python-headless with a workaround
+# Force clean install to fix opencv issues
 singularity exec --nv "$CONTAINER" bash -c "
-    # Check if ultralytics is installed and works
-    if pip show ultralytics >/dev/null 2>&1; then
-        echo '✓ ultralytics already installed'
-    else
-        echo 'Installing dependencies...'
+    echo 'Cleaning old opencv installations...'
 
-        # Remove all opencv variants
-        pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless 2>/dev/null || true
-        rm -rf ~/.local/lib/python3.*/site-packages/cv2* 2>/dev/null || true
-        rm -rf ~/.cache/pip 2>/dev/null || true
+    # Remove all opencv variants
+    pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless 2>/dev/null || true
+    rm -rf ~/.local/lib/python3.*/site-packages/cv2* 2>/dev/null || true
+    rm -rf ~/.local/lib/python3.*/site-packages/*opencv* 2>/dev/null || true
+    rm -rf ~/.cache/pip 2>/dev/null || true
 
-        # Install opencv-python-headless first
-        pip install --user --no-cache-dir opencv-python-headless
+    echo 'Installing opencv-python-headless and ultralytics...'
 
-        # Install ultralytics (will complain about opencv-python but works with headless)
-        pip install --user --no-cache-dir ultralytics tqdm
-    fi
+    # Install opencv-python-headless first
+    pip install --user --no-cache-dir opencv-python-headless==4.10.0.84
+
+    # Install ultralytics (will show warning about opencv-python but works with headless)
+    pip install --user --no-cache-dir ultralytics tqdm
 
     echo ''
     echo 'Installed packages:'
     pip list | grep -E 'ultralytics|opencv|torch' || echo 'Package list unavailable'
+
+    echo ''
+    echo 'Testing cv2 import...'
+    python -c 'import cv2; print(\"✓ OpenCV imports successfully:\", cv2.__version__)'
 "
 
 # Step 2: Download dataset (images only, no annotations)
