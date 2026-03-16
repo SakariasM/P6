@@ -49,28 +49,18 @@ echo "Results: $RESULTS_DIR"
 # Create data directory
 mkdir -p "$DATA_DIR" "$RESULTS_DIR"
 
-# Step 1: Install additional dependencies inside container (if needed)
-echo ""
-echo "=== Step 1: Checking Dependencies ==="
-
-# Check what's in the container
-singularity exec --nv "$CONTAINER" bash -c "
-    echo 'Checking container packages...'
-    pip list | grep -iE 'torch|opencv|cv|ultralytics' || echo 'None found'
-
-    echo ''
-    echo 'Python version:'
-    python --version
-
-    echo ''
-    echo 'Trying to import torch and cv2...'
-    python -c 'import torch; print(f\"torch: {torch.__version__}\")' 2>&1 || echo 'torch not available'
-    python -c 'import cv2; print(f\"cv2: {cv2.__version__}\")' 2>&1 || echo 'cv2 not available (expected)'
-
-    echo ''
-    echo 'Installing ultralytics...'
-    pip install --user ultralytics 2>&1 | tail -20
-"
+  # Step 1: Install additional dependencies inside container (if needed)                                                                                                                                   
+  echo ""                                                                                                                                                                                                  
+  echo "=== Step 1: Checking Dependencies ==="                                                                                                                                                             
+                                                                                                                                                                                                           
+  singularity exec --nv "$CONTAINER" bash -c "
+      pip uninstall -y opencv-python 2>/dev/null || true
+      pip install --user --no-cache-dir opencv-python-headless                                                                                                                                             
+      pip install --user --no-cache-dir --no-deps ultralytics
+      pip install --user --no-cache-dir tqdm                                                                                                                                                               
+      python -c 'import cv2; print(f\"cv2: {cv2.__version__}\")'
+      python -c 'import ultralytics; print(f\"ultralytics: {ultralytics.__version__}\")'                                                                                                                   
+  "   
 
 # Step 2: Download dataset (images only, no annotations)
 echo ""
@@ -107,25 +97,18 @@ fi
 # Step 3: Run teacher model inference
 echo ""
 echo "=== Step 3: Running Teacher Model Inference ==="
+ singularity exec --nv \                                                                                                                                                                                  
+      --bind "$PROJECT_DIR:$PROJECT_DIR" \                                                                                                                                                                 
+      "$CONTAINER" \
+      python "$PROJECT_DIR/src/predictions.py" \                                                                                                                                                           
+          --model yolo11n-seg.pt \                                                                                                                                                                         
+          --input "$DATA_DIR/val2017" \                                                                                                                                                                    
+          --output "$RESULTS_DIR" \                                                                                                                                                                        
+          --format pickle \                                                                                                                                                                                
+          --batch-size 32 \
+          --person-only \
+          --checkpoint-interval 500
 
-# Workaround: Use LD_PRELOAD to skip the problematic library
-singularity exec --nv \
-    --bind "$PROJECT_DIR:$PROJECT_DIR" \
-    "$CONTAINER" \
-    bash -c "
-        # Skip loading GUI libraries
-        export OPENCV_VIDEOIO_DEBUG=1
-        export OPENCV_VIDEOIO_PRIORITY_LIST=FFMPEG,GSTREAMER,IMAGES
-
-        python $PROJECT_DIR/src/predictions.py \
-            --model yolo11n-seg.pt \
-            --input $DATA_DIR/val2017 \
-            --output $RESULTS_DIR \
-            --format pickle \
-            --batch-size 32 \
-            --person-only \
-            --checkpoint-interval 500
-    "
 
 echo ""
 echo "=== Job Complete at $(date) ==="
