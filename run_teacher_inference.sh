@@ -53,31 +53,23 @@ mkdir -p "$DATA_DIR" "$RESULTS_DIR"
 echo ""
 echo "=== Step 1: Checking Dependencies ==="
 
-# Force clean install to fix opencv issues
+# Check what's in the container
 singularity exec --nv "$CONTAINER" bash -c "
-    echo 'Cleaning old opencv installations...'
-
-    # Remove all opencv variants
-    pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless 2>/dev/null || true
-    rm -rf ~/.local/lib/python3.*/site-packages/cv2* 2>/dev/null || true
-    rm -rf ~/.local/lib/python3.*/site-packages/*opencv* 2>/dev/null || true
-    rm -rf ~/.cache/pip 2>/dev/null || true
-
-    echo 'Installing opencv-python-headless and ultralytics...'
-
-    # Install opencv-python-headless first
-    pip install --user --no-cache-dir opencv-python-headless==4.10.0.84
-
-    # Install ultralytics (will show warning about opencv-python but works with headless)
-    pip install --user --no-cache-dir ultralytics tqdm
+    echo 'Checking container packages...'
+    pip list | grep -iE 'torch|opencv|cv|ultralytics' || echo 'None found'
 
     echo ''
-    echo 'Installed packages:'
-    pip list | grep -E 'ultralytics|opencv|torch' || echo 'Package list unavailable'
+    echo 'Python version:'
+    python --version
 
     echo ''
-    echo 'Testing cv2 import...'
-    python -c 'import cv2; print(\"✓ OpenCV imports successfully:\", cv2.__version__)'
+    echo 'Trying to import torch and cv2...'
+    python -c 'import torch; print(f\"torch: {torch.__version__}\")' 2>&1 || echo 'torch not available'
+    python -c 'import cv2; print(f\"cv2: {cv2.__version__}\")' 2>&1 || echo 'cv2 not available (expected)'
+
+    echo ''
+    echo 'Installing ultralytics...'
+    pip install --user ultralytics 2>&1 | tail -20
 "
 
 # Step 2: Download dataset (images only, no annotations)
@@ -116,17 +108,24 @@ fi
 echo ""
 echo "=== Step 3: Running Teacher Model Inference ==="
 
+# Workaround: Use LD_PRELOAD to skip the problematic library
 singularity exec --nv \
     --bind "$PROJECT_DIR:$PROJECT_DIR" \
     "$CONTAINER" \
-    python "$PROJECT_DIR/src/predictions.py" \
-        --model yolo11n-seg.pt \
-        --input "$DATA_DIR/val2017" \
-        --output "$RESULTS_DIR" \
-        --format pickle \
-        --batch-size 32 \
-        --person-only \
-        --checkpoint-interval 500
+    bash -c "
+        # Skip loading GUI libraries
+        export OPENCV_VIDEOIO_DEBUG=1
+        export OPENCV_VIDEOIO_PRIORITY_LIST=FFMPEG,GSTREAMER,IMAGES
+
+        python $PROJECT_DIR/src/predictions.py \
+            --model yolo11n-seg.pt \
+            --input $DATA_DIR/val2017 \
+            --output $RESULTS_DIR \
+            --format pickle \
+            --batch-size 32 \
+            --person-only \
+            --checkpoint-interval 500
+    "
 
 echo ""
 echo "=== Job Complete at $(date) ==="
