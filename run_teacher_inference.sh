@@ -53,14 +53,10 @@ mkdir -p "$DATA_DIR" "$RESULTS_DIR"
   echo ""                                                                                                                                                                                                  
   echo "=== Step 1: Checking Dependencies ==="                                                                                                                                                             
                                                                                                                                                                                                            
-  singularity exec --nv "$CONTAINER" bash -c "
-      pip uninstall -y opencv-python 2>/dev/null || true
-      pip install --user --no-cache-dir opencv-python-headless                                                                                                                                             
-      pip install --user --no-cache-dir --no-deps ultralytics
-      pip install --user --no-cache-dir tqdm                                                                                                                                                               
-      python -c 'import cv2; print(f\"cv2: {cv2.__version__}\")'
-      python -c 'import ultralytics; print(f\"ultralytics: {ultralytics.__version__}\")'                                                                                                                   
-  "   
+  singularity exec --nv "$CONTAINER" bash -c "                                                                                                                                                             
+      pip install --user --no-cache-dir --force-reinstall opencv-python-headless 2>&1 | tail -5
+      pip install --user --no-cache-dir --no-deps ultralytics tqdm 2>&1 | tail -5                                                                                                                          
+  "                                                      
 
 # Step 2: Download dataset (images only, no annotations)
 echo ""
@@ -97,14 +93,14 @@ fi
 # Step 3: Run teacher model inference
 echo ""
 echo "=== Step 3: Running Teacher Model Inference ==="
- singularity exec --nv \                                                                                                                                                                                  
-      --bind "$PROJECT_DIR:$PROJECT_DIR" \                                                                                                                                                                 
-      "$CONTAINER" \
-      python "$PROJECT_DIR/src/predictions.py" \                                                                                                                                                           
-          --model yolo11n-seg.pt \                                                                                                                                                                         
-          --input "$DATA_DIR/val2017" \                                                                                                                                                                    
-          --output "$RESULTS_DIR" \                                                                                                                                                                        
-          --format pickle \                                                                                                                                                                                
+ singularity exec --nv \
+      --bind "$PROJECT_DIR:$PROJECT_DIR" \
+	      "$CONTAINER" \
+      python "$PROJECT_DIR/src/predictions.py" \
+          --model yolo11n-seg.pt \
+          --input "$DATA_DIR/val2017" \
+          --output "$RESULTS_DIR" \
+          --format pickle \
           --batch-size 32 \
           --person-only \
           --checkpoint-interval 500
