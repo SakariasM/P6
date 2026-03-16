@@ -22,6 +22,7 @@ class TeacherPrediction:
     class_ids: List[int]  # hard labels
     class_probs: List[List[float]]  # soft predictions (probability distributions)
     image_shape: Tuple[int, int, int]  # original image shape (H, W, C)
+    masks: Optional[List[List[List[int]]]] = None  # segmentation masks [N, H, W] binary masks
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization."""
@@ -141,7 +142,7 @@ class YOLOTeacherInference:
                 # Extract probabilities for all classes
                 # For YOLOv8, boxes.data contains [x1, y1, x2, y2, conf, cls]
                 # We need to get the full class probability distribution
-                if hasattr(result, 'probs'):
+                if hasattr(result, 'probs') and result.probs is not None:
                     # Classification model
                     class_probs = [result.probs.data.cpu().numpy().tolist()] * len(boxes)
                 else:
@@ -187,6 +188,19 @@ class YOLOTeacherInference:
             if len(normalized_boxes) == 0:
                 continue
 
+            # Extract segmentation masks if available
+            masks_data = None
+            if hasattr(result, 'masks') and result.masks is not None:
+                # Get masks for filtered indices only
+                masks_xy = result.masks.xy  # List of [N, 2] polygon coordinates
+                masks_data = []
+                for i in filtered_indices:
+                    if i < len(masks_xy):
+                        # Convert polygon coordinates to list format
+                        # Each mask is stored as polygon points [[x1,y1], [x2,y2], ...]
+                        mask_polygon = masks_xy[i].tolist()
+                        masks_data.append(mask_polygon)
+
             # Create prediction object
             prediction = TeacherPrediction(
                 image_path=str(image_path),
@@ -194,7 +208,8 @@ class YOLOTeacherInference:
                 confidences=[float(conf[i]) for i in filtered_indices],
                 class_ids=[int(cls[i]) for i in filtered_indices],
                 class_probs=[class_probs[i] for i in filtered_indices],
-                image_shape=(int(h), int(w), 3)
+                image_shape=(int(h), int(w), 3),
+                masks=masks_data
             )
             predictions.append(prediction)
 
@@ -212,7 +227,7 @@ class YOLOTeacherInference:
         Args:
             predictions: List of TeacherPrediction objects
             output_path: Output file path
-            format: Save format ('json' or 'pickle')
+            format: Save format ('json', 'pickle', or 'npz')
         """
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +242,18 @@ class YOLOTeacherInference:
         elif format == "pickle":
             with open(output_path, 'wb') as f:
                 pickle.dump(predictions, f)
+        elif format == "npz":
+            # Save as compressed numpy archive (much smaller for masks)
+            np.savez_compressed(
+                output_path,
+                image_paths=[p.image_path for p in predictions],
+                boxes=[p.boxes for p in predictions],
+                confidences=[p.confidences for p in predictions],
+                class_ids=[p.class_ids for p in predictions],
+                class_probs=[p.class_probs for p in predictions],
+                image_shapes=[p.image_shape for p in predictions],
+                masks=[p.masks for p in predictions]
+            )
         else:
             raise ValueError(f"Unsupported format: {format}")
 
@@ -408,6 +435,20 @@ def load_predictions(file_path: str) -> List[TeacherPrediction]:
     elif file_path.suffix == '.pickle':
         with open(file_path, 'rb') as f:
             return pickle.load(f)
+    elif file_path.suffix == '.npz':
+        data = np.load(file_path, allow_pickle=True)
+        predictions = []
+        for i in range(len(data['image_paths'])):
+            predictions.append(TeacherPrediction(
+                image_path=str(data['image_paths'][i]),
+                boxes=data['boxes'][i].tolist() if isinstance(data['boxes'][i], np.ndarray) else data['boxes'][i],
+                confidences=data['confidences'][i].tolist() if isinstance(data['confidences'][i], np.ndarray) else data['confidences'][i],
+                class_ids=data['class_ids'][i].tolist() if isinstance(data['class_ids'][i], np.ndarray) else data['class_ids'][i],
+                class_probs=data['class_probs'][i].tolist() if isinstance(data['class_probs'][i], np.ndarray) else data['class_probs'][i],
+                image_shape=tuple(data['image_shapes'][i]),
+                masks=data['masks'][i] if 'masks' in data else None
+            ))
+        return predictions
     else:
         raise ValueError(f"Unsupported file format: {file_path.suffix}")
 
@@ -457,9 +498,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--format",
         type=str,
-        choices=["json", "pickle"],
-        default="json",
-        help="Output format"
+        choices=["json", "pickle", "npz"],
+        default="pickle",
+        help="Output format (default: pickle for efficiency)"
     )
     parser.add_argument(
         "--batch-size",
