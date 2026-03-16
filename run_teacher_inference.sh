@@ -4,8 +4,8 @@
 #SBATCH --mem=24G                  # 24GB RAM
 #SBATCH --cpus-per-task=8          # 8 CPU cores for data loading
 #SBATCH --time=02:00:00            # Max 2 hours (1hr download + 1hr inference)
-#SBATCH --output=/ceph/home/aau/%u/P6/logs/teacher_inference_%j.out
-#SBATCH --error=/ceph/home/aau/%u/P6/logs/teacher_inference_%j.err
+#SBATCH --output=logs/run_teacher_inference_%j.out
+#SBATCH --error=logs/run_teacher_inference_%j.err
 
 # Exit on any error
 set -e
@@ -23,8 +23,8 @@ mkdir -p logs
 mkdir -p results
 
 # AAU AI Lab uses Singularity containers, not modules
-# Set container path directly (based on what you confirmed exists)
-CONTAINER="/ceph/container/pytorch_25.12.sif"
+# Set container path - check /ceph/container for available containers
+CONTAINER="/ceph/container/pytorch/pytorch_25.12.sif"
 
 echo "=== Using Container ==="
 echo "Container: $CONTAINER"
@@ -107,7 +107,7 @@ singularity exec --nv \
     --bind "$PROJECT_DIR:$PROJECT_DIR" \
     "$CONTAINER" \
     python "$PROJECT_DIR/src/predictions.py" \
-        --model yolo11n-seg.pt \
+        --model yolo26n-seg.pt \
         --input "$DATA_DIR/val2017" \
         --output "$RESULTS_DIR" \
         --format pickle \
