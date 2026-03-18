@@ -1,6 +1,9 @@
 torch
 torchvision
-Numpy
-Matplotlib
-Jupyter
+numpy
+matplotlib
+jupyter
 ultralytics
+tqdm
+pillow
+pytest
