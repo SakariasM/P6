@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-CONTAINER="/ceph/container/pytorch/pytorch_25.08.sif"
+CONTAINER="/ceph/container/pytorch/pytorch_25.12.sif"
 VENV_DIR="$HOME/kd_venv"
 PROJECT_DIR="$(pwd)"
 

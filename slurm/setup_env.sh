@@ -3,11 +3,11 @@
 # Run this ONCE after cloning the repo to the cluster.
 #
 # Usage:
-#   srun singularity exec /ceph/container/pytorch/pytorch_25.08.sif bash slurm/setup_env.sh
+#   srun singularity exec /ceph/container/pytorch/pytorch_25.12.sif bash slurm/setup_env.sh
 
 set -euo pipefail
 
-CONTAINER="/ceph/container/pytorch/pytorch_25.08.sif"
+CONTAINER="/ceph/container/pytorch/pytorch_25.12.sif"
 VENV_DIR="$HOME/kd_venv"
 
 echo "=== Setting up environment ==="
@@ -26,7 +26,7 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 # Install extra deps not in the container
-pip install --no-cache-dir ultralytics tqdm pillow pytest
+pip install --no-cache-dir ultralytics tqdm pillow pytest opencv-python-headless
 
 # Verify
 echo ""
