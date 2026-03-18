@@ -60,7 +60,7 @@ python3 predictions.py --model yolo26n-seg.pt --input ../test_data/sample/ --out
 ./run_hybrid_distillation.sh
 
 or manually
-# Step 1: Extract teacher predictions + features
+
 # Step 1: Extract teacher predictions + features
 python src/hybrid_predictions.py \
     --model yolo26n.pt \
