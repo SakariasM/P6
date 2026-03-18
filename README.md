@@ -41,9 +41,7 @@ P6/
 │   └── training_history.json
 │
 ├── yolo26n.pt               # Teacher model weights
-├── run_hybrid_distillation.sh    # Main pipeline script
-├── ARCHITECTURE.md          # Technical documentation
-└── STRUCTURE.md             # This file
+
 ```
 
 
