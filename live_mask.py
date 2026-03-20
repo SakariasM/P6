@@ -358,6 +358,8 @@ def _parse_args():
     ap.add_argument("-o", "--output", default=None,
                     help="Path to save output video (e.g. output.mp4). "
                          "In live mode you can also press 'r' to toggle recording.")
+    ap.add_argument("--output-mask", default=None,
+                    help="Path to save binary mask video for benchmarking (e.g. pred_mask.mp4).")
     return ap.parse_args()
 
 
@@ -473,6 +475,17 @@ def main():
         video_writer = _start_writer(record_path)
         recording = video_writer is not None
 
+    # -- mask recording setup (--output-mask) --
+    mask_writer = None
+    if args.output_mask:
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        mask_writer = cv2.VideoWriter(args.output_mask, fourcc, cam_fps, (w, h), isColor=False)
+        if mask_writer.isOpened():
+            print(f"[mask] saving binary mask to {args.output_mask}")
+        else:
+            print(f"[mask] ERROR — could not open writer for {args.output_mask}")
+            mask_writer = None
+
     print(f"Running — rate-limited to {cam_fps:.1f} FPS ({frame_delay_ms} ms/frame)")
     if is_video_file:
         print(f"Playing back: {source}")
@@ -546,6 +559,10 @@ def main():
             cv2.putText(output, f"Display: {fps:.0f}  Seg: {seg_fps:.1f}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
+            # ── mask recording ───────────────────────────────────────────
+            if mask_writer is not None:
+                mask_writer.write(person_mask)
+
             # ── recording indicator + write ─────────────────────────────
             if recording and video_writer is not None:
                 video_writer.write(output)
@@ -577,6 +594,9 @@ def main():
 
     finally:
         # ── clean shutdown ────────────────────────────────────────────────
+        if mask_writer is not None:
+            mask_writer.release()
+            print("[mask] ■ file saved")
         if video_writer is not None:
             video_writer.release()
             print("[record] ■ file saved")
