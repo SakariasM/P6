@@ -85,12 +85,11 @@ The goal of this project is to distill a model from yolo26n which is optimized f
 
 The overall plan:
 
-Goal: 70% mAP & minimun 24 fps on RPi5.
+possible goal: 70% mAP & minimun 24 fps on RPi5.
 
 1. create a program which can save the teacher inference results from yolo26n (predictions.py). 
 
 2. Benchmark teacher model, 
-
 
 3. find a suitable dataset for training and validation. Good performance: 20,000-50,000 images.
 
