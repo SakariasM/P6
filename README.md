@@ -41,9 +41,7 @@ P6/
 │   └── training_history.json
 │
 ├── yolo26n.pt               # Teacher model weights
-├── run_hybrid_distillation.sh    # Main pipeline script
-├── ARCHITECTURE.md          # Technical documentation
-└── STRUCTURE.md             # This file
+
 ```
 
 
@@ -62,7 +60,7 @@ python3 predictions.py --model yolo26n-seg.pt --input ../test_data/sample/ --out
 ./run_hybrid_distillation.sh
 
 or manually
-# Step 1: Extract teacher predictions + features
+
 # Step 1: Extract teacher predictions + features
 python src/hybrid_predictions.py \
     --model yolo26n.pt \
@@ -87,12 +85,11 @@ The goal of this project is to distill a model from yolo26n which is optimized f
 
 The overall plan:
 
-Goal: 70% mAP & minimun 24 fps on RPi5.
+possible goal: 70% mAP & minimun 24 fps on RPi5.
 
 1. create a program which can save the teacher inference results from yolo26n (predictions.py). 
 
 2. Benchmark teacher model, 
-
 
 3. find a suitable dataset for training and validation. Good performance: 20,000-50,000 images.
 

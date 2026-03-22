@@ -438,16 +438,31 @@ def main(args):
         eta_min=args.lr * 0.01
     )
 
-    # Training loop
-    print(f"\nStarting training for {args.epochs} epochs...\n")
-
+    # Optionally resume from a previous training checkpoint
+    start_epoch = 1
     best_loss = float('inf')
     history = []
+
+    if args.resume and Path(args.resume).exists():
+        print(f"Resuming from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_loss = checkpoint.get('loss', float('inf'))
+        print(f"Resumed from epoch {checkpoint['epoch']}, best loss so far: {best_loss:.4f}\n")
+    elif args.resume:
+        print(f"Warning: --resume path '{args.resume}' not found, starting from scratch.\n")
+
+    # Training loop
+    print(f"\nStarting training from epoch {start_epoch} to {args.epochs}...\n")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         metrics = train_epoch(
             model, dataloader, criterion, optimizer, device, epoch
         )
@@ -610,6 +625,12 @@ if __name__ == "__main__":
         type=int,
         default=10,
         help="Save checkpoint every N epochs"
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to a training checkpoint (.pt) to resume from"
     )
 
     args = parser.parse_args()
