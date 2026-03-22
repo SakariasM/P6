@@ -2,7 +2,7 @@
 #SBATCH --job-name=kd-full
 #SBATCH --output=logs/full_%j.out
 #SBATCH --error=logs/full_%j.err
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
 #SBATCH --time=12:00:00

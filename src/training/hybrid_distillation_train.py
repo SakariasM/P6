@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from teacher.hybrid_predictions import load_hybrid_predictions, HybridTeacherPrediction
-from student.student_model import StudentYOLO, TinyStudentYOLO
+from student.student_model import StudentYOLO
 from PIL import Image
 import torchvision.transforms as transforms
 
@@ -404,14 +404,11 @@ def main(args):
 
     # Create student model
     print("Creating student model...")
-    if args.model_type == "tiny":
-        model = TinyStudentYOLO(num_classes=args.num_classes)
-    else:
-        model = StudentYOLO(
-            num_classes=args.num_classes,
-            teacher_feature_shapes=teacher_shapes,
-            use_feature_adapters=True
-        )
+    model = StudentYOLO(
+        num_classes=args.num_classes,
+        teacher_feature_shapes=teacher_shapes,
+        use_feature_adapters=True
+    )
 
     model = model.to(device)
 
@@ -535,13 +532,6 @@ if __name__ == "__main__":
     )
 
     # Model arguments
-    parser.add_argument(
-        "--model-type",
-        type=str,
-        choices=["standard", "tiny"],
-        default="standard",
-        help="Student model type"
-    )
     parser.add_argument(
         "--num-classes",
         type=int,

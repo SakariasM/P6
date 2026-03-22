@@ -3,7 +3,7 @@ Validates shapes, forward pass, feature adapters, and GPU compatibility.
 """
 import pytest
 import torch
-from student.student_model import StudentYOLO, TinyStudentYOLO, FeatureMatchingLayer
+from student.student_model import StudentYOLO, FeatureMatchingLayer
 
 
 class TestFeatureMatchingLayer:
@@ -124,23 +124,3 @@ class TestStudentYOLO:
                 assert param.grad is not None, f"No gradient for {name} on CUDA"
 
 
-class TestTinyStudentYOLO:
-    def test_forward(self):
-        model = TinyStudentYOLO(num_classes=80)
-        x = torch.randn(2, 3, 640, 640)
-        out = model(x)
-        assert out.shape == (2, 85, 20, 20)
-
-    def test_fewer_params_than_standard(self, mock_teacher_shapes):
-        standard = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes)
-        tiny = TinyStudentYOLO(num_classes=80)
-        standard_params = sum(p.numel() for p in standard.parameters())
-        tiny_params = sum(p.numel() for p in tiny.parameters())
-        assert tiny_params < standard_params
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda(self):
-        model = TinyStudentYOLO(num_classes=80).cuda()
-        x = torch.randn(1, 3, 640, 640).cuda()
-        out = model(x)
-        assert out.device.type == "cuda"
