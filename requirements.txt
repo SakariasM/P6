@@ -3,7 +3,7 @@ torchvision
 numpy
 matplotlib
 jupyter
-ultralytics
+dgenerate-ultralytics-headless
 tqdm
 pillow
 pytest

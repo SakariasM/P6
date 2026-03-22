@@ -241,53 +241,9 @@ class StudentYOLO(nn.Module):
         return result
 
 
-class TinyStudentYOLO(nn.Module):
-    """
-    Even more lightweight student model for extreme compression scenarios.
-    """
-
-    def __init__(self, num_classes: int = 80):
-        super().__init__()
-
-        self.num_classes = num_classes
-
-        # Ultra-lightweight backbone
-        self.backbone = nn.Sequential(
-            # Input: 3x640x640
-            nn.Conv2d(3, 16, 3, 2, 1, bias=False),  # 16x320x320
-            nn.BatchNorm2d(16),
-            nn.SiLU(inplace=True),
-
-            nn.Conv2d(16, 32, 3, 2, 1, bias=False),  # 32x160x160
-            nn.BatchNorm2d(32),
-            nn.SiLU(inplace=True),
-
-            nn.Conv2d(32, 64, 3, 2, 1, bias=False),  # 64x80x80
-            nn.BatchNorm2d(64),
-            nn.SiLU(inplace=True),
-
-            nn.Conv2d(64, 128, 3, 2, 1, bias=False),  # 128x40x40
-            nn.BatchNorm2d(128),
-            nn.SiLU(inplace=True),
-
-            nn.Conv2d(128, 256, 3, 2, 1, bias=False),  # 256x20x20
-            nn.BatchNorm2d(256),
-            nn.SiLU(inplace=True),
-        )
-
-        # Simple detection head
-        num_outputs = 5 + num_classes
-        self.head = nn.Conv2d(256, num_outputs, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.backbone(x)
-        return self.head(x)
-
-
 def create_student_from_teacher(
     teacher_feature_extractor,
     num_classes: int = 80,
-    model_type: str = "standard"
 ) -> StudentYOLO:
     """
     Create a student model matched to a teacher's feature dimensions.
@@ -295,7 +251,6 @@ def create_student_from_teacher(
     Args:
         teacher_feature_extractor: YOLOFeatureExtractor instance
         num_classes: Number of object classes
-        model_type: "standard" or "tiny"
 
     Returns:
         Student model instance
@@ -305,16 +260,12 @@ def create_student_from_teacher(
 
     print(f"Creating student model to match teacher with {len(teacher_shapes)} feature layers")
 
-    if model_type == "tiny":
-        student = TinyStudentYOLO(num_classes=num_classes)
-        print("Created TinyStudentYOLO")
-    else:
-        student = StudentYOLO(
-            num_classes=num_classes,
-            teacher_feature_shapes=teacher_shapes,
-            use_feature_adapters=True
-        )
-        print("Created StudentYOLO with feature adapters")
+    student = StudentYOLO(
+        num_classes=num_classes,
+        teacher_feature_shapes=teacher_shapes,
+        use_feature_adapters=True
+    )
+    print("Created StudentYOLO with feature adapters")
 
     # Print model info
     total_params = sum(p.numel() for p in student.parameters())
@@ -367,16 +318,4 @@ if __name__ == "__main__":
     total_params = sum(p.numel() for p in student.parameters())
     print(f"\nTotal parameters: {total_params:,}")
 
-    # Test tiny model
-    print("\n" + "="*60)
-    print("Tiny Student Model")
-    print("="*60)
-
-    tiny_student = TinyStudentYOLO(num_classes=80)
-    tiny_output = tiny_student(dummy_input)
-
-    print(f"Predictions shape: {tiny_output.shape}")
-
-    tiny_params = sum(p.numel() for p in tiny_student.parameters())
-    print(f"Total parameters: {tiny_params:,}")
-    print(f"Compression ratio vs standard: {total_params / tiny_params:.2f}x")
+    print(f"\nTotal parameters: {total_params:,}")
