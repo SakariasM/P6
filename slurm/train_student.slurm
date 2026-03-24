@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=kd-train
-#SBATCH --output=logs/train_%j.out
-#SBATCH --error=logs/train_%j.err
+#SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/train_%j.out
+#SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/train_%j.err
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
