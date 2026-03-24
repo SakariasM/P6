@@ -4,7 +4,7 @@
 #SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/train_%j.err
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=24G
+#SBATCH --mem=64G
 #SBATCH --time=12:00:00
 
 # Phase 2: Train student model with hybrid distillation.
