@@ -1,7 +1,7 @@
 """
 YOLO Teacher Model
 
-Wraps a pretrained YOLOv8 backbone and uses forward hooks to extract
+Wraps a pretrained YOLO backbone and uses forward hooks to extract
 multi-scale feature maps and spatial attention maps for distillation.
 
 The teacher is always frozen — it is never trained.
@@ -11,6 +11,11 @@ Feature extraction strategy:
     idx 4  → C2f after stride-8 downsampling  (fine-grained, H/8)
     idx 6  → C2f after stride-16 downsampling (mid-level,   H/16)
     idx 8  → C2f after stride-32 downsampling (semantic,    H/32)
+
+  YOLO26 backbone layers (uses C3k2 blocks + C2PSA attention block):
+    idx 4  → C3k2 after stride-8 downsampling  (fine-grained, H/8)
+    idx 6  → C3k2 after stride-16 downsampling (mid-level,   H/16)
+    idx 10 → C2PSA after stride-32 downsampling (semantic,   H/32)
 
   Attention maps are computed as the channel-mean of absolute activations,
   then min-max normalised per sample to [0, 1].
@@ -23,20 +28,34 @@ import torch.nn.functional as F
 
 # Channel widths produced by each model variant at the three hook layers.
 YOLO_FEATURE_CHANNELS = {
+    # YOLOv8 — C2f blocks at layers 4, 6, 8
     "yolov8n": [128,  256,  512],
     "yolov8s": [256,  512,  1024],
     "yolov8m": [384,  768,  1536],
     "yolov8l": [512,  1024, 2048],
     "yolov8x": [640,  1280, 2560],
+    # YOLO26 — C3k2 blocks at layers 4, 6; C2PSA block at layer 10
+    "yolo26n": [128,  128,  256],
+    "yolo26s": [256,  256,  512],
+    "yolo26m": [384,  384,  768],
+    "yolo26l": [512,  512,  1024],
+    "yolo26x": [640,  640,  1280],
 }
 
-# Default layer indices inside model.model to hook (C2f blocks).
+# Default layer indices inside model.model to hook.
 YOLO_HOOK_LAYERS = {
+    # YOLOv8: C2f blocks
     "yolov8n": [4, 6, 8],
     "yolov8s": [4, 6, 8],
     "yolov8m": [4, 6, 8],
     "yolov8l": [4, 6, 8],
     "yolov8x": [4, 6, 8],
+    # YOLO26: C3k2 (4, 6) + C2PSA (10)
+    "yolo26n": [4, 6, 10],
+    "yolo26s": [4, 6, 10],
+    "yolo26m": [4, 6, 10],
+    "yolo26l": [4, 6, 10],
+    "yolo26x": [4, 6, 10],
 }
 
 

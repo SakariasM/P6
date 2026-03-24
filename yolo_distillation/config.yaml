@@ -4,11 +4,12 @@
 
 # ---- Teacher -------------------------------------------------------
 teacher:
-  model_name: "yolov8s"       # yolov8n / yolov8s / yolov8m / yolov8l / yolov8x
+  model_name: "yolo26n"       # yolo26n/s/m/l/x  or  yolov8n/s/m/l/x
   pretrained: true
   # Indices of backbone layers to hook for feature extraction.
-  # For YOLOv8 these correspond to C2f blocks at stride-8 (4), -16 (6), -32 (8).
-  hook_layers: [4, 6, 8]
+  # YOLO26: C3k2 at stride-8 (4), stride-16 (6); C2PSA at stride-32 (10).
+  # YOLOv8: C2f blocks at stride-8 (4), stride-16 (6), stride-32 (8).
+  hook_layers: [4, 6, 10]
 
 # ---- Student -------------------------------------------------------
 student:
@@ -20,7 +21,7 @@ student:
   # teacher_channels must match the number of hook_layers above.
   # These are the channel widths produced by the teacher at each hooked layer.
   # Adjust to match your chosen model_name (see teacher.py YOLO_FEATURE_CHANNELS).
-  teacher_channels: [256, 512, 1024]   # yolov8s values
+  teacher_channels: [128, 128, 256]    # yolo26n values
 
 # ---- Distillation loss weights -------------------------------------
 distillation:
@@ -33,8 +34,8 @@ distillation:
 training:
   num_epochs:   100
   batch_size:   8
-  learning_rate: 1e-4
-  weight_decay:  1e-5
+  learning_rate: 0.0001
+  weight_decay:  0.00001
   optimizer:    "adam"           # adam | adamw
   scheduler:    "cosine"        # cosine | step | none
 
