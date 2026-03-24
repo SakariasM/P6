@@ -30,6 +30,7 @@ logs/
 *.swp
 *.swo
 .claude/
+CLAUDE.md
 # OS
 .DS_Store
 
