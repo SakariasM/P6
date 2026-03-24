@@ -21,8 +21,8 @@ PROJECT_DIR="${SLURM_SUBMIT_DIR}"
 
 # Configurable via env vars
 MODEL="${TEACHER_MODEL:-/scratch/project/yolo26n-seg.pt}"
-INPUT="${DATA_DIR:-/ceph/project/P6-Machine-Vision/P6/data/open-images-v7}"
-OUTPUT="${OUTPUT_DIR:-./results/hybrid_predictions}"
+INPUT="${DATA_DIR:-/ceph/project/P6-Machine-Vision/P6/data/open-images-v7/train/data}"
+OUTPUT="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/results/hybrid_predictions}"
 BATCH="${BATCH_SIZE:-8}"
 
 echo "=== Teacher Feature Extraction ==="
@@ -57,7 +57,7 @@ singularity exec --nv \
             --output '${OUTPUT}' \
             --batch-size ${BATCH} \
             --person-only \
-            --checkpoint-interval 50
+            --checkpoint-interval 500
 
         echo ''
         echo '=== Extraction complete ==='

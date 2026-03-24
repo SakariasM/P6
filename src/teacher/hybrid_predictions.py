@@ -170,6 +170,9 @@ class HybridYOLOInference:
         Returns:
             List of HybridTeacherPrediction objects
         """
+        from PIL import Image
+        import torchvision.transforms as transforms
+
         predictions = []
 
         # If single source, make it a list
@@ -177,26 +180,24 @@ class HybridYOLOInference:
             if Path(image_sources).is_file():
                 image_sources = [image_sources]
 
+        # --- First pass: collect per-image detection data and identify which
+        #     images have valid (filtered) detections ---
+        per_image_data = []  # list of dicts, one per result with detections
         for idx, result in enumerate(results):
             boxes = result.boxes
-
             if boxes is None or len(boxes) == 0:
                 continue
 
-            # Use the original source path if available, fall back to result.path
-            # (Ultralytics may return generic names like 'image0.jpg' for list inputs)
             if isinstance(image_sources, list) and idx < len(image_sources):
                 image_path = image_sources[idx]
             else:
                 image_path = result.path
             orig_shape = result.orig_shape  # (H, W)
 
-            # Extract box data
             xyxy = boxes.xyxy.cpu().numpy()
             conf = boxes.conf.cpu().numpy()
             cls = boxes.cls.cpu().numpy().astype(int)
 
-            # Get soft predictions
             num_classes = len(self.model.names)
             class_probs = []
             for i in range(len(boxes)):
@@ -204,76 +205,90 @@ class HybridYOLOInference:
                 prob_dist[cls[i]] = conf[i]
                 class_probs.append(prob_dist.tolist())
 
-            # Normalize boxes
             h, w = orig_shape
             normalized_boxes = []
             filtered_indices = []
-
             for i, box in enumerate(xyxy):
                 if self.filter_class is not None and cls[i] != self.filter_class:
                     continue
-
                 x1, y1, x2, y2 = box
-                normalized_box = [
-                    float(x1 / w),
-                    float(y1 / h),
-                    float(x2 / w),
-                    float(y2 / h)
-                ]
-                normalized_boxes.append(normalized_box)
+                normalized_boxes.append([
+                    float(x1 / w), float(y1 / h),
+                    float(x2 / w), float(y2 / h)
+                ])
                 filtered_indices.append(i)
 
             if len(normalized_boxes) == 0:
                 continue
 
-            # Extract features if enabled
-            features = {}
-            raw_logits = None
+            per_image_data.append({
+                'image_path': image_path,
+                'orig_shape': orig_shape,
+                'xyxy': xyxy,
+                'conf': conf,
+                'cls': cls,
+                'class_probs': class_probs,
+                'normalized_boxes': normalized_boxes,
+                'filtered_indices': filtered_indices,
+                'result': result,
+            })
 
-            if self.extract_features and self.feature_extractor is not None:
-                # Load and preprocess image for feature extraction
-                from PIL import Image
-                import torchvision.transforms as transforms
+        # --- Batch feature extraction: one forward pass for all images with detections ---
+        batch_features = {}   # idx -> {layer: tensor}
+        batch_logits = {}     # idx -> tensor
 
-                img = Image.open(image_path).convert('RGB')
-                transform = transforms.Compose([
-                    transforms.Resize((640, 640)),
-                    transforms.ToTensor(),
-                ])
-                img_tensor = transform(img)
+        if self.extract_features and self.feature_extractor is not None and per_image_data:
+            transform = transforms.Compose([
+                transforms.Resize((640, 640)),
+                transforms.ToTensor(),
+            ])
+            imgs = []
+            for entry in per_image_data:
+                img = Image.open(entry['image_path']).convert('RGB')
+                imgs.append(transform(img))
 
-                # Extract features
-                feature_result = self.feature_extractor.extract_features(
-                    img_tensor,
-                    return_predictions=True
-                )
+            img_batch = torch.stack(imgs)  # (N, C, H, W)
+            feature_result = self.feature_extractor.extract_features(
+                img_batch,
+                return_predictions=True
+            )
 
-                # Store features (move to CPU to save memory)
-                features = {
-                    k: v.cpu() if isinstance(v, torch.Tensor) else v
+            # Split batch features back per image
+            for batch_idx in range(len(per_image_data)):
+                batch_features[batch_idx] = {
+                    k: v[batch_idx].cpu() if isinstance(v, torch.Tensor) else v
                     for k, v in feature_result['features'].items()
                 }
-
-                # Store raw logits if available
                 if 'logits' in feature_result:
                     logits = feature_result['logits']
                     if isinstance(logits, torch.Tensor):
-                        raw_logits = logits.cpu()
-                    elif isinstance(logits, (tuple, list)):
-                        # YOLO may return multiple outputs, take the first
-                        raw_logits = logits[0].cpu() if isinstance(logits[0], torch.Tensor) else None
+                        batch_logits[batch_idx] = logits[batch_idx].cpu()
+                    elif isinstance(logits, (tuple, list)) and isinstance(logits[0], torch.Tensor):
+                        batch_logits[batch_idx] = logits[0][batch_idx].cpu()
 
-            # Extract segmentation masks if available
+        # --- Second pass: build prediction objects ---
+        for batch_idx, entry in enumerate(per_image_data):
+            image_path = entry['image_path']
+            orig_shape = entry['orig_shape']
+            conf = entry['conf']
+            cls = entry['cls']
+            class_probs = entry['class_probs']
+            normalized_boxes = entry['normalized_boxes']
+            filtered_indices = entry['filtered_indices']
+            result = entry['result']
+            h, w = orig_shape
+
+            features = batch_features.get(batch_idx, {})
+            raw_logits = batch_logits.get(batch_idx, None)
+
             masks_data = None
             if hasattr(result, 'masks') and result.masks is not None:
                 masks_xy = result.masks.xy
                 masks_data = []
                 for i in filtered_indices:
                     if i < len(masks_xy):
-                        mask_polygon = masks_xy[i].tolist()
-                        masks_data.append(mask_polygon)
+                        masks_data.append(masks_xy[i].tolist())
 
-            # Create hybrid prediction object
             prediction = HybridTeacherPrediction(
                 image_path=str(image_path),
                 boxes=normalized_boxes,
