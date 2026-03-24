@@ -183,8 +183,12 @@ class HybridYOLOInference:
             if boxes is None or len(boxes) == 0:
                 continue
 
-            # Get image info
-            image_path = result.path
+            # Use the original source path if available, fall back to result.path
+            # (Ultralytics may return generic names like 'image0.jpg' for list inputs)
+            if isinstance(image_sources, list) and idx < len(image_sources):
+                image_path = image_sources[idx]
+            else:
+                image_path = result.path
             orig_shape = result.orig_shape  # (H, W)
 
             # Extract box data
