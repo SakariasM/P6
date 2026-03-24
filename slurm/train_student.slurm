@@ -57,6 +57,7 @@ singularity exec --nv \
     /bin/bash -c "
         source /scratch/venv/bin/activate
         cd /scratch/project
+        export PYTHONPATH=/scratch/project/src
 
         nvidia-smi
 
@@ -82,7 +83,7 @@ singularity exec --nv \
         echo ''
         echo '=== Starting training ==='
 
-        python src/training/hybrid_distillation_train.py \
+        python -m training.hybrid_distillation_train \
             --predictions \"\${PREDICTIONS}\" \
             --image-root '${IMAGE_ROOT}' \
             --epochs ${EPOCHS} \
