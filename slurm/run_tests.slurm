@@ -31,6 +31,7 @@ singularity exec --nv \
     /bin/bash -c "
         source /scratch/venv/bin/activate
         cd /scratch/project
+        export PYTHONPATH=/scratch/project/src
 
         echo '=== Environment ==='
         python -c \"
