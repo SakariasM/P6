@@ -38,6 +38,7 @@ singularity exec --nv \
     /bin/bash -c "
         source /scratch/venv/bin/activate
         cd /scratch/project
+        export PYTHONPATH=/scratch/project/src
 
         nvidia-smi
 
@@ -50,7 +51,7 @@ singularity exec --nv \
         # ---- Step 2: Extract teacher knowledge ----
         echo ''
         echo '===== STEP 2/3: Teacher extraction ====='
-        python src/teacher/hybrid_predictions.py \
+        python -m teacher.hybrid_predictions \
             --model '${MODEL}' \
             --input '${DATA}' \
             --output '${PRED_DIR}' \
@@ -71,7 +72,7 @@ singularity exec --nv \
             exit 1
         fi
 
-        python src/training/hybrid_distillation_train.py \
+        python -m training.hybrid_distillation_train \
             --predictions \"\${PRED_FILE}\" \
             --image-root '${DATA}' \
             --epochs ${EPOCHS} \

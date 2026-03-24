@@ -44,13 +44,14 @@ singularity exec --nv \
     /bin/bash -c "
         source /scratch/venv/bin/activate
         cd /scratch/project
+        export PYTHONPATH=/scratch/project/src
 
         nvidia-smi
 
         echo ''
         echo '=== Starting extraction ==='
 
-        python src/teacher/hybrid_predictions.py \
+        python -m teacher.hybrid_predictions \
             --model '${MODEL}' \
             --input '${INPUT}' \
             --output '${OUTPUT}' \
