@@ -1,0 +1,54 @@
+# ============================================================
+# YOLO Attention Distillation — Training Configuration
+# ============================================================
+
+# ---- Teacher -------------------------------------------------------
+teacher:
+  model_name: "yolov8s"       # yolov8n / yolov8s / yolov8m / yolov8l / yolov8x
+  pretrained: true
+  # Indices of backbone layers to hook for feature extraction.
+  # For YOLOv8 these correspond to C2f blocks at stride-8 (4), -16 (6), -32 (8).
+  hook_layers: [4, 6, 8]
+
+# ---- Student -------------------------------------------------------
+student:
+  in_channels:   4      # masked RGB (3) + mask (1)
+  out_channels:  3      # RGB output
+  base_channels: 64     # doubling at each encoder level
+  depth:         4      # encoder depth; 4 → channels: 64→128→256→512→1024
+
+  # teacher_channels must match the number of hook_layers above.
+  # These are the channel widths produced by the teacher at each hooked layer.
+  # Adjust to match your chosen model_name (see teacher.py YOLO_FEATURE_CHANNELS).
+  teacher_channels: [256, 512, 1024]   # yolov8s values
+
+# ---- Distillation loss weights -------------------------------------
+distillation:
+  attention_weight:        1.0    # CBAM map ↔ YOLO attention map (MSE)
+  mimicry_weight:          0.5    # projected student feat ↔ teacher feat (L2)
+  relation_weight:         0.5    # Gram matrix relationship preservation (L1)
+  reconstruction_l1_weight: 1.0  # pixel L1 between student output and GT
+
+# ---- Training loop -------------------------------------------------
+training:
+  num_epochs:   100
+  batch_size:   8
+  learning_rate: 1e-4
+  weight_decay:  1e-5
+  optimizer:    "adam"           # adam | adamw
+  scheduler:    "cosine"        # cosine | step | none
+
+  gradient_clip_max_norm: 1.0
+
+  log_interval:  50    # steps between TensorBoard scalar writes
+  val_interval:  1     # epochs between validation runs
+  save_interval: 10    # epochs between periodic checkpoints
+
+# ---- Data ----------------------------------------------------------
+data:
+  image_size: 256
+  num_workers: 4
+  # Paths are relative to the repository root.
+  # Reuse the existing dataset; this module does not define its own loader.
+  train_dir: "data/train"
+  val_dir:   "data/val"
