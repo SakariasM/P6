@@ -375,7 +375,8 @@ def train_epoch(
 def main(args):
     """Main training function."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}\n")
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"Using device: {device}, GPUs available: {n_gpus}\n")
 
     # Create dataset
     print("Loading dataset...")
@@ -411,6 +412,9 @@ def main(args):
     )
 
     model = model.to(device)
+    if n_gpus > 1:
+        print(f"Using DataParallel across {n_gpus} GPUs")
+        model = torch.nn.DataParallel(model)
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -446,7 +450,12 @@ def main(args):
     if args.resume and Path(args.resume).exists():
         print(f"Resuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint['model_state_dict'])
+        state_dict = checkpoint['model_state_dict']
+        # Strip 'module.' prefix saved by DataParallel so weights always load cleanly
+        if any(k.startswith('module.') for k in state_dict):
+            state_dict = {k[len('module.'):]: v for k, v in state_dict.items()}
+        target = model.module if isinstance(model, torch.nn.DataParallel) else model
+        target.load_state_dict(state_dict)
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if 'scheduler_state_dict' in checkpoint:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -483,12 +492,15 @@ def main(args):
             'lr': optimizer.param_groups[0]['lr']
         })
 
+        # Always save state dict without 'module.' prefix for portability
+        raw_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+
         # Save best model
         if metrics['total_loss'] < best_loss:
             best_loss = metrics['total_loss']
             torch.save({
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': raw_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_loss,
                 'args': vars(args)
@@ -499,7 +511,7 @@ def main(args):
         if epoch % args.save_interval == 0:
             torch.save({
                 'epoch': epoch,
-                'model_state_dict': model.state_dict(),
+                'model_state_dict': raw_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
                 'loss': metrics['total_loss'],
@@ -507,8 +519,9 @@ def main(args):
             }, output_dir / f'checkpoint_epoch_{epoch}.pt')
 
     # Save final model
+    raw_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
     torch.save({
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': raw_state,
         'args': vars(args)
     }, output_dir / 'final_model.pt')
 

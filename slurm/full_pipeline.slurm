@@ -14,10 +14,10 @@ set -euo pipefail
 
 CONTAINER="/ceph/container/pytorch/pytorch_25.12.sif"
 VENV_DIR="$HOME/kd_venv"
-PROJECT_DIR="$(pwd)"
+PROJECT_DIR="${SLURM_SUBMIT_DIR}"
 
-MODEL="${TEACHER_MODEL:-yolo26n.pt}"
-DATA="${DATA_DIR:-./data/images}"
+MODEL="${TEACHER_MODEL:-/scratch/project/yolo26n-seg.pt}"
+DATA="${DATA_DIR:-/ceph/project/P6-Machine-Vision/P6/data/open-images-v7}"
 PRED_DIR="./results/hybrid_predictions"
 EPOCHS="${EPOCHS:-50}"
 BATCH="${BATCH_SIZE:-16}"
@@ -33,6 +33,7 @@ mkdir -p logs results/hybrid_predictions trained_models
 singularity exec --nv \
     -B "${VENV_DIR}:/scratch/venv" \
     -B "${PROJECT_DIR}:/scratch/project" \
+    -B "/ceph/project/P6-Machine-Vision/P6/data:/ceph/project/P6-Machine-Vision/P6/data" \
     "${CONTAINER}" \
     /bin/bash -c "
         source /scratch/venv/bin/activate
@@ -73,7 +74,6 @@ singularity exec --nv \
         python src/training/hybrid_distillation_train.py \
             --predictions \"\${PRED_FILE}\" \
             --image-root '${DATA}' \
-            --model-type standard \
             --epochs ${EPOCHS} \
             --batch-size ${BATCH} \
             --lr 1e-3 \

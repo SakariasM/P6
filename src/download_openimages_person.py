@@ -36,7 +36,6 @@ def download_split(split: str, max_samples: int = None):
         shuffle=True,
         num_workers=16,
         dataset_name=dataset_name,
-        dataset_dir=str(OUTPUT_DIR / f"raw_{split}"),
     )
 
     num_samples = len(dataset)
