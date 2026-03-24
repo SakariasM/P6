@@ -55,7 +55,7 @@ singularity exec --nv \
         echo ''
         echo '=== Starting extraction (worker ${WORKER_ID}) ==='
 
-        python -m teacher.hybrid_predictions \
+        python -u -m teacher.hybrid_predictions \
             --model '${MODEL}' \
             --input '${INPUT}' \
             --output '${OUTPUT}' \

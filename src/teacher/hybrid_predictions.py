@@ -352,7 +352,9 @@ class HybridYOLOInference:
         output_dir: str,
         batch_size: int = 8,  # Smaller batch for features
         save_format: str = "torch",
-        checkpoint_interval: int = 50
+        checkpoint_interval: int = 50,
+        worker_id: int = 0,
+        num_workers: int = 1,
     ):
         """
         Process entire dataset and save hybrid predictions with checkpointing.
@@ -363,6 +365,8 @@ class HybridYOLOInference:
             batch_size: Batch size (smaller recommended when extracting features)
             save_format: Format to save ('torch' recommended)
             checkpoint_interval: Save checkpoint every N images
+            worker_id: Index of this worker (0-based)
+            num_workers: Total number of parallel workers
         """
         image_dir = Path(image_dir)
         output_dir = Path(output_dir)
@@ -375,12 +379,18 @@ class HybridYOLOInference:
             if f.suffix.lower() in image_extensions
         ])
 
+        # Shard across workers — each worker takes every num_workers-th image
+        if num_workers > 1:
+            image_files = image_files[worker_id::num_workers]
+            print(f"Worker {worker_id}/{num_workers}: processing {len(image_files)} images")
+
         print(f"Found {len(image_files)} images in {image_dir}")
         if self.extract_features:
             print(f"Note: Feature extraction enabled - using smaller batches")
 
-        checkpoint_file = output_dir / f"checkpoint.{save_format}"
-        progress_file = output_dir / "progress.json"
+        suffix = f"_worker{worker_id}" if num_workers > 1 else ""
+        checkpoint_file = output_dir / f"checkpoint{suffix}.{save_format}"
+        progress_file = output_dir / f"progress{suffix}.json"
         all_predictions = []
         start_idx = 0
 
@@ -442,7 +452,7 @@ class HybridYOLOInference:
             raise
 
         # Save final output
-        output_file = output_dir / f"hybrid_teacher_predictions.{save_format}"
+        output_file = output_dir / f"hybrid_teacher_predictions{suffix}.{save_format}"
         self.save_predictions(all_predictions, str(output_file), format=save_format)
 
         # Save metadata
@@ -519,6 +529,10 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-interval", type=int, default=50)
     parser.add_argument("--no-features", action="store_true",
                        help="Disable feature extraction")
+    parser.add_argument("--worker-id", type=int, default=0,
+                       help="Index of this worker for parallel extraction (0-based)")
+    parser.add_argument("--num-workers", type=int, default=1,
+                       help="Total number of parallel workers")
 
     args = parser.parse_args()
 
@@ -540,7 +554,9 @@ if __name__ == "__main__":
             image_dir=args.input,
             output_dir=args.output,
             batch_size=args.batch_size,
-            checkpoint_interval=args.checkpoint_interval
+            checkpoint_interval=args.checkpoint_interval,
+            worker_id=args.worker_id,
+            num_workers=args.num_workers,
         )
     except Exception:
         traceback.print_exc()
