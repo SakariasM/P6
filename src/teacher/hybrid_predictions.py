@@ -507,19 +507,27 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Initialize
-    teacher = HybridYOLOInference(
-        model_name=args.model,
-        conf_threshold=args.conf,
-        iou_threshold=args.iou,
-        filter_class=0 if args.person_only else None,
-        extract_features=not args.no_features
-    )
+    import traceback
+    import sys
 
-    # Process dataset
-    teacher.process_dataset(
-        image_dir=args.input,
-        output_dir=args.output,
-        batch_size=args.batch_size,
-        checkpoint_interval=args.checkpoint_interval
-    )
+    try:
+        # Initialize
+        teacher = HybridYOLOInference(
+            model_name=args.model,
+            conf_threshold=args.conf,
+            iou_threshold=args.iou,
+            filter_class=0 if args.person_only else None,
+            extract_features=not args.no_features
+        )
+
+        # Process dataset
+        teacher.process_dataset(
+            image_dir=args.input,
+            output_dir=args.output,
+            batch_size=args.batch_size,
+            checkpoint_interval=args.checkpoint_interval
+        )
+    except Exception:
+        traceback.print_exc()
+        sys.stderr.flush()
+        sys.exit(1)
