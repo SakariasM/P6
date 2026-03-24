@@ -168,6 +168,11 @@ class YOLOFeatureExtractor:
 
         image = image.to(self.device)
 
+        # Match input dtype to model dtype (e.g. float16 when model runs in half precision)
+        model_dtype = next(self.pytorch_model.parameters()).dtype
+        if image.dtype != model_dtype:
+            image = image.to(dtype=model_dtype)
+
         with torch.no_grad():
             # Forward pass (this will trigger hooks)
             output = self.pytorch_model(image)
