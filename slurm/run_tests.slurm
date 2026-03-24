@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=kd-tests
-#SBATCH --output=logs/tests_%j.out
-#SBATCH --error=logs/tests_%j.err
+#SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/tests_%j.out
+#SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/tests_%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
