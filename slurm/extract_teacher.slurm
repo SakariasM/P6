@@ -2,7 +2,7 @@
 #SBATCH --job-name=kd-extract
 #SBATCH --output=logs/extract_%j.out
 #SBATCH --error=logs/extract_%j.err
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
 #SBATCH --time=04:00:00
