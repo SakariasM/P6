@@ -173,7 +173,7 @@ class StudentGenerator(nn.Module):
         # ---- Decoder --------------------------------------------------------
         self.decoder = nn.ModuleList()
         for i in range(depth):
-            in_d  = ch + ch // 2 if i > 0 else ch
+            in_d  = ch + ch // 2
             out_d = ch // 2
             self.decoder.append(UpBlock(in_d, out_d))
             ch //= 2
