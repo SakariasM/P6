@@ -389,30 +389,46 @@ class HybridYOLOInference:
             print(f"Note: Feature extraction enabled - using smaller batches")
 
         suffix = f"_worker{worker_id}" if num_workers > 1 else ""
-        checkpoint_file = output_dir / f"checkpoint{suffix}.{save_format}"
         progress_file = output_dir / f"progress{suffix}.json"
-        all_predictions = []
-        start_idx = 0
+        final_output_file = output_dir / f"hybrid_teacher_predictions{suffix}.{save_format}"
 
-        # Try to resume from checkpoint
-        if checkpoint_file.exists() and progress_file.exists():
-            print(f"\nFound existing checkpoint, attempting to resume...")
-            try:
-                all_predictions = torch.load(checkpoint_file, weights_only=False)
-                with open(progress_file, 'r') as f:
-                    progress = json.load(f)
-                    start_idx = progress.get('processed_images', 0)
+        # Skip if this worker already completed (old single-file format)
+        if final_output_file.exists():
+            print(f"Worker {worker_id} already completed: {final_output_file} exists. Skipping.")
+            return
 
-                print(f"Loaded {len(all_predictions)} existing predictions")
-                print(f"Resuming from image {start_idx}/{len(image_files)}")
-            except Exception as e:
-                print(f"Error loading checkpoint: {e}")
-                print("Starting from scratch...")
-                all_predictions = []
-                start_idx = 0
+        # Resume: count completed chunk files to find start position
+        existing_chunks = sorted(output_dir.glob(f"chunk_*{suffix}.{save_format}"))
+        num_completed_chunks = len(existing_chunks)
+        start_idx = num_completed_chunks * checkpoint_interval
 
-        # Process in batches
+        if num_completed_chunks > 0:
+            print(f"\nFound {num_completed_chunks} existing chunks, resuming from image {start_idx}/{len(image_files)}")
+
+        # Process in batches, saving chunks and clearing RAM
+        chunk_predictions = []
         images_processed = start_idx
+        chunk_idx = num_completed_chunks
+        total_predictions_saved = 0
+
+        def save_chunk():
+            nonlocal chunk_idx, total_predictions_saved, chunk_predictions
+            chunk_file = output_dir / f"chunk_{chunk_idx:04d}{suffix}.{save_format}"
+            print(f"  Saving chunk {chunk_idx} ({len(chunk_predictions)} predictions) → {chunk_file.name}")
+            self.save_predictions(chunk_predictions, str(chunk_file), format=save_format)
+            total_predictions_saved += len(chunk_predictions)
+            chunk_predictions = []  # free RAM
+            chunk_idx += 1
+
+            progress = {
+                "processed_images": images_processed,
+                "total_images": len(image_files),
+                "num_chunks": chunk_idx,
+                "num_predictions_saved": total_predictions_saved,
+            }
+            with open(progress_file, 'w') as f:
+                json.dump(progress, f, indent=2)
+
         try:
             for i in range(start_idx, len(image_files), batch_size):
                 batch_files = image_files[i:i + batch_size]
@@ -422,69 +438,39 @@ class HybridYOLOInference:
                 total_batches = (len(image_files) - 1) // batch_size + 1
                 print(f"\nBatch {batch_num}/{total_batches} (images {i+1}-{min(i+batch_size, len(image_files))}/{len(image_files)})")
 
-                # Run inference
                 predictions = self.run_inference(batch_paths, save_predictions=True)
-                all_predictions.extend(predictions)
+                chunk_predictions.extend(predictions)
                 images_processed += len(batch_files)
 
-                # Checkpoint periodically
-                if images_processed % checkpoint_interval < batch_size or images_processed == len(image_files):
-                    print(f"  Saving checkpoint... ({len(all_predictions)} predictions)")
-                    self.save_predictions(all_predictions, str(checkpoint_file), format=save_format)
-
-                    progress = {
-                        "processed_images": images_processed,
-                        "total_images": len(image_files),
-                        "num_predictions": len(all_predictions)
-                    }
-                    with open(progress_file, 'w') as f:
-                        json.dump(progress, f, indent=2)
+                # Save chunk and free RAM every checkpoint_interval images
+                images_in_chunk = images_processed - (chunk_idx * checkpoint_interval)
+                if images_in_chunk >= checkpoint_interval:
+                    save_chunk()
 
         except KeyboardInterrupt:
-            print("\n\nInterrupted! Saving checkpoint...")
-            self.save_predictions(all_predictions, str(checkpoint_file), format=save_format)
-            return all_predictions
+            print("\n\nInterrupted! Saving partial chunk...")
+            if chunk_predictions:
+                save_chunk()
+            return
 
         except Exception as e:
             print(f"\n\nError: {e}")
-            print("Saving checkpoint...")
-            self.save_predictions(all_predictions, str(checkpoint_file), format=save_format)
+            print("Saving partial chunk...")
+            if chunk_predictions:
+                save_chunk()
             raise
 
-        # Save final output
-        output_file = output_dir / f"hybrid_teacher_predictions{suffix}.{save_format}"
-        self.save_predictions(all_predictions, str(output_file), format=save_format)
-
-        # Save metadata
-        metadata = {
-            "model": str(self.model),
-            "num_images": len(image_files),
-            "num_predictions": len(all_predictions),
-            "feature_extraction_enabled": self.extract_features,
-            "feature_layers": list(all_predictions[0].features.keys()) if all_predictions and all_predictions[0].features else [],
-            "conf_threshold": self.conf_threshold,
-            "iou_threshold": self.iou_threshold,
-            "filter_class": self.filter_class,
-            "device": self.device
-        }
-
-        with open(output_dir / "metadata.json", 'w') as f:
-            json.dump(metadata, f, indent=2)
-
-        # Cleanup checkpoint
-        if checkpoint_file.exists():
-            checkpoint_file.unlink()
-        if progress_file.exists():
-            progress_file.unlink()
+        # Save any remaining predictions as the final chunk
+        if chunk_predictions:
+            save_chunk()
 
         print(f"\n{'='*60}")
         print(f"Processing complete!")
         print(f"{'='*60}")
-        print(f"Total images: {len(image_files)}")
-        print(f"Total predictions: {len(all_predictions)}")
-        print(f"Output: {output_file}")
-
-        return all_predictions
+        print(f"Total images processed: {images_processed}")
+        print(f"Total chunks saved: {chunk_idx}")
+        print(f"Total predictions saved: {total_predictions_saved}")
+        print(f"Run merge_predictions.py to combine all chunks into one file.")
 
     def __del__(self):
         """Cleanup feature extractor."""

@@ -8,9 +8,8 @@
 #SBATCH --time=12:00:00
 
 # Phase 2: Train student model with hybrid distillation.
-# Supports incremental training: automatically resumes from the latest training
-# checkpoint and uses checkpoint.torch from extraction if the final predictions
-# file is not yet available.
+# Uses chunk-epoch training: loads one prediction chunk at a time to avoid OOM.
+# Supports incremental training: automatically resumes from the latest checkpoint.
 #
 # Usage: sbatch slurm/train_student.slurm
 #
@@ -33,13 +32,11 @@ FEAT_W="${FEATURE_WEIGHT:-1.0}"
 RESP_W="${RESPONSE_WEIGHT:-1.0}"
 TEMP="${TEMPERATURE:-3.0}"
 FEAT_DIST="${FEATURE_DISTANCE:-mse}"
-MODEL_TYPE="${MODEL_TYPE:-standard}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
 
 echo "=== Student Training ==="
 echo "Node: $(hostname)"
 echo "Job ID: ${SLURM_JOB_ID}"
-echo "Model type: ${MODEL_TYPE}"
 echo "Epochs: ${EPOCHS}"
 echo "Batch size: ${BATCH}"
 echo "LR: ${LR}"
@@ -47,30 +44,21 @@ echo "Feature weight: ${FEAT_W}, Response weight: ${RESP_W}"
 echo "Temperature: ${TEMP}, Distance: ${FEAT_DIST}"
 echo ""
 
-mkdir -p logs "${OUT_DIR}"
+mkdir -p "${OUT_DIR}"
 
 singularity exec --nv \
     -B "${VENV_DIR}:/scratch/venv" \
     -B "${PROJECT_DIR}:/scratch/project" \
-    -B "/ceph/project/P6-Machine-Vision/P6/data:/ceph/project/P6-Machine-Vision/P6/data" \
+    -B "/ceph/project/P6-Machine-Vision/P6:/ceph/project/P6-Machine-Vision/P6" \
     "${CONTAINER}" \
     /bin/bash -c "
         source /scratch/venv/bin/activate
         cd /scratch/project
         export PYTHONPATH=/scratch/project/src
+        export TMPDIR=/ceph/project/P6-Machine-Vision/P6/tmp/train_\${SLURM_JOB_ID}
+        mkdir -p \"\${TMPDIR}\"
 
         nvidia-smi
-
-        # Pick predictions file: prefer final output, fall back to in-progress checkpoint
-        if [ -f '${PRED_DIR}/hybrid_teacher_predictions.torch' ]; then
-            PREDICTIONS='${PRED_DIR}/hybrid_teacher_predictions.torch'
-        elif [ -f '${PRED_DIR}/checkpoint.torch' ]; then
-            PREDICTIONS='${PRED_DIR}/checkpoint.torch'
-        else
-            echo 'ERROR: No predictions file found in ${PRED_DIR}'
-            exit 1
-        fi
-        echo \"Using predictions: \${PREDICTIONS}\"
 
         # Resume from latest training checkpoint if one exists
         RESUME_ARG=''
@@ -82,9 +70,10 @@ singularity exec --nv \
 
         echo ''
         echo '=== Starting training ==='
+        echo 'Predictions dir: ${PRED_DIR}'
 
-        python -m training.hybrid_distillation_train \
-            --predictions \"\${PREDICTIONS}\" \
+        python -u -m training.hybrid_distillation_train \
+            --predictions '${PRED_DIR}' \
             --image-root '${IMAGE_ROOT}' \
             --epochs ${EPOCHS} \
             --batch-size ${BATCH} \
