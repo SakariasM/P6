@@ -92,8 +92,10 @@ class YOLOTeacher(nn.Module):
         # ---- Load backbone ------------------------------------------------
         weight_arg = f"{model_name}.pt" if pretrained else model_name
         yolo = YOLO(weight_arg)
-        # ultralytics stores the actual nn.Module as yolo.model.model
-        self.backbone: nn.Sequential = yolo.model.model
+        # Keep the full DetectionModel so its routing logic (Concat, etc.) runs
+        # correctly. yolo.model.model is the raw nn.Sequential but it does not
+        # handle multi-input layers; yolo.model does.
+        self.yolo_model = yolo.model
         self.model_name = model_name
 
         # ---- Hook registration -------------------------------------------
@@ -103,7 +105,7 @@ class YOLOTeacher(nn.Module):
         self._hooks = []
 
         for idx in indices:
-            h = self.backbone[idx].register_forward_hook(self._make_hook(idx))
+            h = self.yolo_model.model[idx].register_forward_hook(self._make_hook(idx))
             self._hooks.append(h)
 
         # ---- Freeze teacher completely ------------------------------------
@@ -128,6 +130,7 @@ class YOLOTeacher(nn.Module):
             h.remove()
         self._hooks.clear()
 
+
     # ------------------------------------------------------------------
     # Forward
     # ------------------------------------------------------------------
@@ -145,8 +148,9 @@ class YOLOTeacher(nn.Module):
                 "attention_maps": list of [B, 1, H', W'] tensors in [0, 1]
         """
         self._features = {}
-        # Run backbone only (detection head is not needed)
-        self.backbone(x)
+        # Run through the full DetectionModel so that multi-input layers
+        # (e.g. Concat) receive the correct layer routing.
+        self.yolo_model(x)
 
         features = [self._features[idx] for idx in self._hook_indices]
         attention_maps = [self._spatial_attention(f) for f in features]
