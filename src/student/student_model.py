@@ -44,7 +44,7 @@ class StudentYOLO(nn.Module):
 
     def __init__(
         self,
-        num_classes: int = 80,
+        num_classes: int = 1,
         teacher_feature_shapes: Optional[Dict[str, Tuple]] = None,
         use_feature_adapters: bool = True
     ):
@@ -243,7 +243,7 @@ class StudentYOLO(nn.Module):
 
 def create_student_from_teacher(
     teacher_feature_extractor,
-    num_classes: int = 80,
+    num_classes: int = 1,
 ) -> StudentYOLO:
     """
     Create a student model matched to a teacher's feature dimensions.
@@ -294,7 +294,7 @@ if __name__ == "__main__":
     }
 
     student = StudentYOLO(
-        num_classes=80,
+        num_classes=1,
         teacher_feature_shapes=mock_teacher_shapes,
         use_feature_adapters=True
     )

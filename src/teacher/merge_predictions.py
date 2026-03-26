@@ -1,37 +1,49 @@
-"""Merge worker prediction files from a parallel extraction run."""
+"""Merge chunked prediction files from a parallel extraction run."""
 import argparse
 from pathlib import Path
 import torch
 
 
+def merge_worker(input_dir: Path, worker_id: int, save_format: str) -> list:
+    """Load and concatenate all chunk files for one worker."""
+    suffix = f"_worker{worker_id}"
+    chunks = sorted(input_dir.glob(f"chunk_*{suffix}.{save_format}"))
+
+    if not chunks:
+        # Fall back to old single-file format
+        single = input_dir / f"hybrid_teacher_predictions{suffix}.{save_format}"
+        if single.exists():
+            print(f"  Worker {worker_id}: loading single file {single.name}")
+            return torch.load(single, weights_only=False)
+        print(f"  Worker {worker_id}: no files found, skipping")
+        return []
+
+    predictions = []
+    for chunk in chunks:
+        preds = torch.load(chunk, weights_only=False)
+        predictions.extend(preds)
+        print(f"  {chunk.name}: {len(preds)} predictions")
+
+    print(f"  Worker {worker_id} total: {len(predictions)} predictions from {len(chunks)} chunks")
+    return predictions
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Merge parallel worker prediction files")
+    parser = argparse.ArgumentParser(description="Merge chunked worker prediction files")
     parser.add_argument("--input", type=str, required=True,
-                        help="Directory containing worker prediction files")
+                        help="Directory containing chunk files")
     parser.add_argument("--output", type=str, required=True,
                         help="Path for merged output file")
     parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--format", type=str, default="torch")
     args = parser.parse_args()
 
     input_dir = Path(args.input)
     all_predictions = []
 
     for worker_id in range(args.num_workers):
-        # Prefer final output over checkpoint
-        final = input_dir / f"hybrid_teacher_predictions_worker{worker_id}.torch"
-        checkpoint = input_dir / f"checkpoint_worker{worker_id}.torch"
-
-        if final.exists():
-            path = final
-        elif checkpoint.exists():
-            path = checkpoint
-            print(f"Warning: worker {worker_id} has no final output, using checkpoint")
-        else:
-            print(f"Warning: no file found for worker {worker_id}, skipping")
-            continue
-
-        preds = torch.load(path, weights_only=False)
-        print(f"Worker {worker_id}: {len(preds)} predictions from {path.name}")
+        print(f"\nWorker {worker_id}:")
+        preds = merge_worker(input_dir, worker_id, args.format)
         all_predictions.extend(preds)
 
     output_path = Path(args.output)

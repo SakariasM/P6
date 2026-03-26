@@ -9,6 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import json
+import random
 from tqdm import tqdm
 import argparse
 
@@ -23,31 +24,20 @@ from PIL import Image
 import torchvision.transforms as transforms
 
 
-class HybridDistillationDataset(Dataset):
-    """
-    Dataset for hybrid knowledge distillation.
-    Loads images with teacher predictions and intermediate features.
-    """
+class ChunkDataset(Dataset):
+    """Dataset wrapping a single chunk of predictions already loaded in memory."""
 
     def __init__(
         self,
-        predictions_file: str,
+        predictions: List[HybridTeacherPrediction],
         image_root: Optional[str] = None,
         transform: Optional[transforms.Compose] = None,
         target_size: Tuple[int, int] = (640, 640)
     ):
-        """
-        Args:
-            predictions_file: Path to hybrid predictions (.pt file)
-            image_root: Root directory for images
-            transform: Image transforms
-            target_size: Target image size (W, H)
-        """
-        self.predictions = load_hybrid_predictions(predictions_file)
+        self.predictions = predictions
         self.image_root = Path(image_root) if image_root else None
         self.target_size = target_size
 
-        # Default transform
         if transform is None:
             self.transform = transforms.Compose([
                 transforms.Resize(target_size),
@@ -56,27 +46,12 @@ class HybridDistillationDataset(Dataset):
         else:
             self.transform = transform
 
-        # Filter out images without features
-        self.predictions = [p for p in self.predictions if p.features]
-
-        print(f"Loaded {len(self.predictions)} samples with teacher features")
-
     def __len__(self) -> int:
         return len(self.predictions)
 
     def __getitem__(self, idx: int) -> Dict:
-        """
-        Returns:
-            Dictionary with:
-                - image: Input image tensor
-                - teacher_features: Dict of teacher feature maps
-                - teacher_logits: Teacher raw logits (if available)
-                - boxes: Ground truth boxes
-                - class_probs: Soft class probabilities
-        """
         prediction = self.predictions[idx]
 
-        # Load image
         image_path = Path(prediction.image_path)
         if self.image_root and not image_path.is_absolute():
             image_path = self.image_root / image_path
@@ -85,7 +60,6 @@ class HybridDistillationDataset(Dataset):
         if self.transform:
             image = self.transform(image)
 
-        # Prepare teacher features
         teacher_features = {
             k: v for k, v in prediction.features.items()
         }
@@ -96,17 +70,37 @@ class HybridDistillationDataset(Dataset):
             'image_path': str(image_path)
         }
 
-        # Add logits if available
         if prediction.raw_logits is not None:
             sample['teacher_logits'] = prediction.raw_logits
 
-        # Add detection labels
         if len(prediction.boxes) > 0:
             sample['boxes'] = torch.tensor(prediction.boxes, dtype=torch.float32)
             sample['class_probs'] = torch.tensor(prediction.class_probs, dtype=torch.float32)
             sample['confidences'] = torch.tensor(prediction.confidences, dtype=torch.float32)
 
         return sample
+
+
+def discover_chunk_files(predictions_path: str) -> List[Path]:
+    """Discover prediction files — supports chunk directory or single file."""
+    pred_path = Path(predictions_path)
+
+    if pred_path.is_file():
+        return [pred_path]
+
+    if pred_path.is_dir():
+        chunks = sorted(pred_path.glob("chunk_*.torch"))
+        # Also include old-format final files from workers
+        for f in sorted(pred_path.glob("hybrid_teacher_predictions_worker*.torch")):
+            chunks.append(f)
+        # Also include single merged file
+        merged = pred_path / "hybrid_teacher_predictions.torch"
+        if merged.exists():
+            chunks.append(merged)
+        if chunks:
+            return chunks
+
+    raise FileNotFoundError(f"No prediction files found at {predictions_path}")
 
 
 class HybridDistillationLoss(nn.Module):
@@ -373,35 +367,24 @@ def train_epoch(
 
 
 def main(args):
-    """Main training function."""
+    """Main training function with chunk-epoch training for memory efficiency."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Using device: {device}, GPUs available: {n_gpus}\n")
 
-    # Create dataset
-    print("Loading dataset...")
-    dataset = HybridDistillationDataset(
-        predictions_file=args.predictions,
-        image_root=args.image_root,
-        target_size=(args.img_size, args.img_size)
-    )
+    # Discover prediction chunk files
+    chunk_files = discover_chunk_files(args.predictions)
+    print(f"Found {len(chunk_files)} prediction file(s)")
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True
-    )
-
-    print(f"Dataset size: {len(dataset)}")
-    print(f"Batches per epoch: {len(dataloader)}\n")
-
-    # Get teacher feature shapes from first sample
-    sample = dataset[0]
+    # Load first chunk briefly to get teacher feature shapes
+    print("Loading first chunk to determine feature shapes...")
+    first_preds = torch.load(chunk_files[0], weights_only=False)
+    first_preds = [p for p in first_preds if p.features]
     teacher_shapes = {
-        k: (1, *v.shape) for k, v in sample['teacher_features'].items()
+        k: (1, *v.shape) for k, v in first_preds[0].features.items()
     }
+    print(f"Teacher feature shapes: {teacher_shapes}")
+    del first_preds
 
     # Create student model
     print("Creating student model...")
@@ -416,7 +399,6 @@ def main(args):
         print(f"Using DataParallel across {n_gpus} GPUs")
         model = torch.nn.DataParallel(model)
 
-    # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params:,}\n")
 
@@ -451,7 +433,6 @@ def main(args):
         print(f"Resuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
         state_dict = checkpoint['model_state_dict']
-        # Strip 'module.' prefix saved by DataParallel so weights always load cleanly
         if any(k.startswith('module.') for k in state_dict):
             state_dict = {k[len('module.'):]: v for k, v in state_dict.items()}
         target = model.module if isinstance(model, torch.nn.DataParallel) else model
@@ -465,26 +446,97 @@ def main(args):
     elif args.resume:
         print(f"Warning: --resume path '{args.resume}' not found, starting from scratch.\n")
 
-    # Training loop
-    print(f"\nStarting training from epoch {start_epoch} to {args.epochs}...\n")
+    # Training loop — chunk-epoch: iterate through chunks per epoch
+    print(f"\nStarting training from epoch {start_epoch} to {args.epochs}...")
+    print(f"Training on {len(chunk_files)} chunks (loaded one at a time to save memory)\n")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(start_epoch, args.epochs + 1):
-        metrics = train_epoch(
-            model, dataloader, criterion, optimizer, device, epoch
-        )
+        model.train()
+
+        # Shuffle chunk order each epoch for better generalization
+        shuffled_chunks = chunk_files.copy()
+        random.shuffle(shuffled_chunks)
+
+        epoch_loss = 0.0
+        epoch_feature_loss = 0.0
+        epoch_response_loss = 0.0
+        epoch_batches = 0
+
+        for chunk_idx, chunk_file in enumerate(shuffled_chunks):
+            # Load chunk into memory
+            preds = torch.load(chunk_file, weights_only=False)
+            preds = [p for p in preds if p.features]
+
+            if not preds:
+                del preds
+                continue
+
+            chunk_dataset = ChunkDataset(
+                preds,
+                image_root=args.image_root,
+                target_size=(args.img_size, args.img_size)
+            )
+            chunk_loader = DataLoader(
+                chunk_dataset,
+                batch_size=args.batch_size,
+                shuffle=True,
+                num_workers=args.num_workers,
+                pin_memory=True
+            )
+
+            desc = f"Epoch {epoch} chunk {chunk_idx+1}/{len(shuffled_chunks)}"
+            progress_bar = tqdm(chunk_loader, desc=desc)
+
+            for batch in progress_bar:
+                images = batch['image'].to(device)
+                teacher_features = {
+                    k: v.to(device) for k, v in batch['teacher_features'].items()
+                }
+                teacher_logits = batch.get('teacher_logits')
+                if teacher_logits is not None:
+                    teacher_logits = teacher_logits.to(device)
+
+                optimizer.zero_grad()
+                student_output = model(images, return_features=True)
+                loss, loss_dict = criterion(
+                    student_output, teacher_features, teacher_logits
+                )
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss_dict['total_loss']
+                epoch_feature_loss += loss_dict.get('feature_loss', 0.0)
+                epoch_response_loss += loss_dict.get('response_loss', 0.0)
+                epoch_batches += 1
+
+                progress_bar.set_postfix({
+                    'loss': f"{loss_dict['total_loss']:.4f}",
+                    'feat': f"{loss_dict.get('feature_loss', 0.0):.4f}",
+                })
+
+            # Free chunk memory
+            del preds, chunk_dataset, chunk_loader
+            torch.cuda.empty_cache()
 
         # Update scheduler
         scheduler.step()
 
-        # Log metrics
+        # Log epoch metrics
+        metrics = {
+            'total_loss': epoch_loss / max(epoch_batches, 1),
+            'feature_loss': epoch_feature_loss / max(epoch_batches, 1),
+            'response_loss': epoch_response_loss / max(epoch_batches, 1),
+        }
+
         print(f"\nEpoch {epoch}/{args.epochs}")
         print(f"  Total Loss: {metrics['total_loss']:.4f}")
         print(f"  Feature Loss: {metrics['feature_loss']:.4f}")
         print(f"  Response Loss: {metrics['response_loss']:.4f}")
         print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
+        print(f"  Batches: {epoch_batches}")
 
         history.append({
             'epoch': epoch,
@@ -492,7 +544,7 @@ def main(args):
             'lr': optimizer.param_groups[0]['lr']
         })
 
-        # Always save state dict without 'module.' prefix for portability
+        # Save state dict without 'module.' prefix for portability
         raw_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
 
         # Save best model
@@ -563,7 +615,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-classes",
         type=int,
-        default=80,
+        default=1,
         help="Number of object classes"
     )
 
