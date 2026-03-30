@@ -6,7 +6,7 @@ Expects the following directory layout:
     data/
       train/
         images/   ← clean ground-truth images (jpg/png)
-        masks/    ← binary masks, same filename as the image (jpg/png)
+        masks/    ← binary masks; filename prefix before first '_' must match image stem (jpg/png)
                     white (255) = hole to inpaint, black (0) = keep
       val/
         images/
@@ -65,11 +65,12 @@ class InpaintingDataset(Dataset):
         if len(self.image_paths) == 0:
             raise RuntimeError(f"No images found in {img_dir}")
 
-        # Build mask lookup by stem so extensions can differ
-        mask_by_stem = {p.stem: p for p in _find_images(mask_dir)}
+        # Build mask lookup keyed by the part before the first '_' so that
+        # mask filenames like "abc123_m09j2d_ec3c2c21.png" match image "abc123.jpg"
+        mask_by_prefix = {p.stem.split("_")[0]: p for p in _find_images(mask_dir)}
         self.mask_paths = []
         for img_path in self.image_paths:
-            mask_path = mask_by_stem.get(img_path.stem)
+            mask_path = mask_by_prefix.get(img_path.stem)
             if mask_path is None:
                 raise FileNotFoundError(
                     f"No matching mask for image '{img_path.name}' in {mask_dir}"
