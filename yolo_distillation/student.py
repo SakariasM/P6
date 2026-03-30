@@ -173,7 +173,9 @@ class StudentGenerator(nn.Module):
         # ---- Decoder --------------------------------------------------------
         self.decoder = nn.ModuleList()
         for i in range(depth):
-            in_d  = ch + ch // 2 if i > 0 else ch
+            # Every decoder step receives a skip connection from the encoder,
+            # so in_ch must always account for the concatenated skip channels.
+            in_d  = ch + ch // 2
             out_d = ch // 2
             self.decoder.append(UpBlock(in_d, out_d))
             ch //= 2

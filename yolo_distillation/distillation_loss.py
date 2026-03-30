@@ -31,45 +31,20 @@ import torch.nn.functional as F
 # ---------------------------------------------------------------------------
 
 class AttentionTransferLoss(nn.Module):
-    """Align student CBAM attention maps with teacher spatial attention maps.
-
-    Both maps are in [0, 1].  Teacher maps are bilinearly interpolated to the
-    student spatial resolution before computing MSE.
-
-    Args:
-        reduction (str): "mean" or "sum"
-    """
-
-    def __init__(self, reduction: str = "mean"):
+    # push student cbam maps toward teacher attention maps (both in [0,1])
+    def __init__(self, reduction="mean"):
         super().__init__()
         self.reduction = reduction
 
-    def forward(self,
-                student_atts: list,
-                teacher_atts: list) -> torch.Tensor:
-        """
-        Args:
-            student_atts: list of [B, 1, H_s, W_s] — student CBAM maps
-            teacher_atts: list of [B, 1, H_t, W_t] — teacher pseudo-attention maps
-
-        Returns:
-            Scalar loss averaged across scales.
-        """
-        assert len(student_atts) == len(teacher_atts), (
-            "Number of student and teacher attention scales must match. "
-            f"Got {len(student_atts)} vs {len(teacher_atts)}."
-        )
+    def forward(self, student_atts, teacher_atts):
         total = 0.0
-        for s_att, t_att in zip(student_atts, teacher_atts):
-            # Resize teacher attention to student spatial dims
-            if (t_att.shape[2], t_att.shape[3]) != (s_att.shape[2], s_att.shape[3]):
-                t_att = F.interpolate(t_att, size=s_att.shape[2:],
-                                      mode="bilinear", align_corners=False)
+        for s, t in zip(student_atts, teacher_atts):
+            if (t.shape[2], t.shape[3]) != (s.shape[2], s.shape[3]):
+                t = F.interpolate(t, size=s.shape[2:], mode='bilinear', align_corners=False)
             if self.reduction == "mean":
-                total += F.mse_loss(s_att, t_att.detach())
+                total += F.mse_loss(s, t.detach())
             else:
-                total += F.mse_loss(s_att, t_att.detach(), reduction="sum")
-
+                total += F.mse_loss(s, t.detach(), reduction="sum")
         return total / len(student_atts)
 
 

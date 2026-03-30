@@ -131,6 +131,7 @@ def main():
         config=config,
         device=device,
         writer=writer,
+        scheduler=scheduler,
     )
 
     # ---- Resume ----------------------------------------------------------
@@ -147,11 +148,6 @@ def main():
     num_epochs = config["training"]["num_epochs"]
     print(f"[distill] Starting training for {num_epochs} epochs")
     trainer.train(train_loader, val_loader, num_epochs, start_epoch)
-
-    if scheduler is not None:
-        # Wrap trainer.train_step to step the scheduler each epoch.
-        # (If you need per-epoch scheduler stepping, hook it in trainer.train)
-        pass
 
     if writer is not None:
         writer.close()
