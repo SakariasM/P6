@@ -40,10 +40,12 @@ class DistillationTrainer:
         writer      : TensorBoard SummaryWriter (or None)
     """
 
-    def __init__(self, teacher, student, optimizer, config, device, writer=None):
+    def __init__(self, teacher, student, optimizer, config, device, writer=None,
+                 scheduler=None):
         self.teacher   = teacher
         self.student   = student
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self.config    = config
         self.device    = device
         self.writer    = writer
@@ -233,3 +235,6 @@ class DistillationTrainer:
                     self,
                     f"checkpoints/distillation/epoch_{epoch + 1}.pth"
                 )
+
+            if self.scheduler is not None:
+                self.scheduler.step()

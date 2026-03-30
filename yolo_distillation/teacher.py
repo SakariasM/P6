@@ -158,23 +158,13 @@ class YOLOTeacher(nn.Module):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _spatial_attention(feat: torch.Tensor) -> torch.Tensor:
-        """Compute a normalised spatial attention map from a feature tensor.
-
-        Strategy: channel-wise mean of absolute activations, then per-sample
-        min-max normalisation → [0, 1].
-
-        Args:
-            feat: [B, C, H, W]
-
-        Returns:
-            [B, 1, H, W] in [0, 1]
-        """
-        att = feat.abs().mean(dim=1, keepdim=True)          # [B, 1, H, W]
-        b = att.shape[0]
+    def _spatial_attention(feat):
+        # mean abs activation across channels, normalize per sample to [0,1]
+        att  = feat.abs().mean(dim=1, keepdim=True)
+        b    = att.shape[0]
         flat = att.view(b, -1)
-        mn = flat.min(1)[0].view(b, 1, 1, 1)
-        mx = flat.max(1)[0].view(b, 1, 1, 1)
+        mn   = flat.min(1)[0].view(b, 1, 1, 1)
+        mx   = flat.max(1)[0].view(b, 1, 1, 1)
         return (att - mn) / (mx - mn + 1e-8)
 
     def feature_channels(self) -> list:
