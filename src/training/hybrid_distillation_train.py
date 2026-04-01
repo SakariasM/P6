@@ -73,11 +73,6 @@ class ChunkDataset(Dataset):
         if prediction.raw_logits is not None:
             sample['teacher_logits'] = prediction.raw_logits
 
-        if len(prediction.boxes) > 0:
-            sample['boxes'] = torch.tensor(prediction.boxes, dtype=torch.float32)
-            sample['class_probs'] = torch.tensor(prediction.class_probs, dtype=torch.float32)
-            sample['confidences'] = torch.tensor(prediction.confidences, dtype=torch.float32)
-
         return sample
 
 
@@ -157,7 +152,7 @@ class HybridDistillationLoss(nn.Module):
             Tuple of (total_loss, loss_dict)
         """
         losses = {}
-        total_loss = 0.0
+        total_loss = torch.tensor(0.0, device=student_output['predictions'].device, requires_grad=True)
 
         # 1. Feature-based distillation loss
         if 'adapted_features' in student_output and teacher_features:
