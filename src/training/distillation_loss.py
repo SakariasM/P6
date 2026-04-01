@@ -53,13 +53,9 @@ class RelationDistillationLoss(nn.Module):
 class SegmentationDistillationLoss(nn.Module):
     def __init__(self, attention_weight=1.0, mimicry_weight=0.5, relation_weight=0.5):
         super().__init__()
-        # Store as Parameters so that the weighted sum is always part of the
-        # computational graph (total.requires_grad == True regardless of inputs).
-        # requires_grad=True ensures the output tensor is differentiable even when
-        # student inputs are plain tensors (as in test fixtures).
-        self.att_w = nn.Parameter(torch.tensor(float(attention_weight)), requires_grad=True)
-        self.mim_w = nn.Parameter(torch.tensor(float(mimicry_weight)), requires_grad=True)
-        self.rel_w = nn.Parameter(torch.tensor(float(relation_weight)), requires_grad=True)
+        self.att_w = attention_weight
+        self.mim_w = mimicry_weight
+        self.rel_w = relation_weight
         self.att_loss = AttentionTransferLoss()
         self.mim_loss = FeatureMimicryLoss()
         self.rel_loss = RelationDistillationLoss()
