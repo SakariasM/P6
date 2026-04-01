@@ -49,9 +49,9 @@ def test_combined_loss():
         mimicry_weight=0.5,
         relation_weight=0.5,
     )
-    student_atts = [torch.rand(2, 1, 32, 32), torch.rand(2, 1, 16, 16)]
+    student_atts = [torch.rand(2, 1, 32, 32, requires_grad=True), torch.rand(2, 1, 16, 16, requires_grad=True)]
     teacher_atts = [torch.rand(2, 1, 80, 80), torch.rand(2, 1, 40, 40)]
-    projected = [torch.randn(2, 128, 32, 32), torch.randn(2, 256, 16, 16)]
+    projected = [torch.randn(2, 128, 32, 32, requires_grad=True), torch.randn(2, 256, 16, 16, requires_grad=True)]
     teacher_feats = [torch.randn(2, 128, 80, 80), torch.randn(2, 256, 40, 40)]
 
     total, loss_dict = loss_fn(
