@@ -150,29 +150,31 @@ class StudentYOLO(nn.Module):
         """
         adapters = nn.ModuleDict()
 
-        # Define student feature channels at each stage
-        student_channels = {
-            'stage1': 64,
-            'stage2': 128,
-            'stage3': 256,
-        }
+        # Define student feature channels at each stage (ordered small→large)
+        student_stages = [
+            ('stage1', 64),
+            ('stage2', 128),
+            ('stage3', 256),
+        ]
 
-        # Match adapters to teacher layers
-        for teacher_layer, shape in teacher_feature_shapes.items():
-            if isinstance(shape, tuple) and len(shape) == 4:
-                # Shape is (B, C, H, W)
-                teacher_channels = shape[1]
+        # Pair teacher layers with student stages by index
+        # Teacher layers are sorted by name so model.4 → stage1, model.6 → stage2, etc.
+        teacher_layers = [
+            (name, shape) for name, shape in teacher_feature_shapes.items()
+            if isinstance(shape, tuple) and len(shape) == 4
+        ]
 
-                # Find appropriate student layer to match
-                # This mapping depends on your specific architecture
-                for student_layer, s_channels in student_channels.items():
-                    adapter_name = f"{student_layer}_to_{teacher_layer.replace('.', '_')}"
-                    adapters[adapter_name] = FeatureMatchingLayer(
-                        s_channels,
-                        teacher_channels,
-                        use_bn=True
-                    )
-                    break  # One adapter per teacher layer
+        for i, (teacher_layer, shape) in enumerate(teacher_layers):
+            if i >= len(student_stages):
+                break
+            student_layer, s_channels = student_stages[i]
+            teacher_channels = shape[1]
+            adapter_name = f"{student_layer}_to_{teacher_layer.replace('.', '_')}"
+            adapters[adapter_name] = FeatureMatchingLayer(
+                s_channels,
+                teacher_channels,
+                use_bn=True
+            )
 
         return adapters
 
