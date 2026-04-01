@@ -1,16 +1,38 @@
-# Python cache
+# Python
 __pycache__/
-*.pyc
-*.pyo
-
-# Virtual environment
-.venv/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
 venv/
+bin/
+lib/
+include/
+pyvenv.cfg
+share/
+etc/
+test_data/*
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
 
-# Generated images
-*.png
-*.jpg
-!image.jpg
+# Data and models
+data/
+checkpoints/
+logs/
+*.pth
+*.pt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/
+CLAUDE.md
+# OS
+.DS_Store
 
 # Model cache
 .cache/
