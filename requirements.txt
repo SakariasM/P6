@@ -7,3 +7,10 @@ dgenerate-ultralytics-headless
 tqdm
 pillow
 pytest
+# Distillation — YOLO teacher
+pyyaml
+tensorboard
+# Inpainting pipeline
+diffusers
+transformers
+accelerate

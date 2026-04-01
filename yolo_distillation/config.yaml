@@ -1,0 +1,55 @@
+# ============================================================
+# YOLO Attention Distillation — Training Configuration
+# ============================================================
+
+# ---- Teacher -------------------------------------------------------
+teacher:
+  model_name: "yolo26n"       # yolo26n/s/m/l/x  or  yolov8n/s/m/l/x
+  pretrained: true
+  # Indices of backbone layers to hook for feature extraction.
+  # YOLO26: C3k2 at stride-8 (4), stride-16 (6); C2PSA at stride-32 (10).
+  # YOLOv8: C2f blocks at stride-8 (4), stride-16 (6), stride-32 (8).
+  hook_layers: [4, 6, 10]
+
+# ---- Student -------------------------------------------------------
+student:
+  in_channels:   4      # masked RGB (3) + mask (1)
+  out_channels:  3      # RGB output
+  base_channels: 64     # doubling at each encoder level
+  depth:         4      # encoder depth; 4 → channels: 64→128→256→512→1024
+
+  # teacher_channels must match the number of hook_layers above.
+  # These are the channel widths produced by the teacher at each hooked layer.
+  # Adjust to match your chosen model_name (see teacher.py YOLO_FEATURE_CHANNELS).
+  teacher_channels: [128, 128, 256]    # yolo26n values
+
+# ---- Distillation loss weights -------------------------------------
+distillation:
+  attention_weight:        1.0    # CBAM map ↔ YOLO attention map (MSE)
+  mimicry_weight:          0.5    # projected student feat ↔ teacher feat (L2)
+  relation_weight:         0.5    # Gram matrix relationship preservation (L1)
+  reconstruction_l1_weight: 1.0  # pixel L1 between student output and GT
+
+# ---- Training loop -------------------------------------------------
+training:
+  num_epochs:   100
+  batch_size:   8
+  learning_rate: 0.0001
+  weight_decay:  0.00001
+  optimizer:    "adam"           # adam | adamw
+  scheduler:    "cosine"        # cosine | step | none
+
+  gradient_clip_max_norm: 1.0
+
+  log_interval:  50    # steps between TensorBoard scalar writes
+  val_interval:  1     # epochs between validation runs
+  save_interval: 10    # epochs between periodic checkpoints
+
+# ---- Data ----------------------------------------------------------
+data:
+  image_size: 256
+  num_workers: 4
+  # Paths are relative to the repository root.
+  # Reuse the existing dataset; this module does not define its own loader.
+  train_dir: "data/train"
+  val_dir:   "data/val"

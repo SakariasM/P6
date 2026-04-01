@@ -34,3 +34,9 @@ CLAUDE.md
 # OS
 .DS_Store
 
+# Model cache
+.cache/
+
+# TensorBoard runs (keep folder, ignore contents)
+runs/**
+!runs/.gitkeep
