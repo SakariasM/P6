@@ -7,7 +7,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 
-# Phase 2: Train student model with hybrid distillation.
+# Phase 2: Train student segmentation model with attention-based distillation.
 # Uses chunk-epoch training: loads one prediction chunk at a time to avoid OOM.
 # Supports incremental training: automatically resumes from the latest checkpoint.
 #
@@ -27,21 +27,22 @@ PRED_DIR="${PRED_DIR:-/ceph/project/P6-Machine-Vision/P6/results/hybrid_predicti
 IMAGE_ROOT="${DATA_DIR:-/ceph/project/P6-Machine-Vision/P6/data/open-images-v7/train/data}"
 EPOCHS="${EPOCHS:-50}"
 BATCH="${BATCH_SIZE:-16}"
-LR="${LEARNING_RATE:-1e-3}"
-FEAT_W="${FEATURE_WEIGHT:-1.0}"
-RESP_W="${RESPONSE_WEIGHT:-1.0}"
-TEMP="${TEMPERATURE:-3.0}"
-FEAT_DIST="${FEATURE_DISTANCE:-mse}"
+LR="${LEARNING_RATE:-1e-4}"
+ATT_W="${ATTENTION_WEIGHT:-1.0}"
+MIM_W="${MIMICRY_WEIGHT:-0.5}"
+REL_W="${RELATION_WEIGHT:-0.5}"
+BASE_CH="${BASE_CHANNELS:-32}"
+DEPTH="${DEPTH:-4}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
 
-echo "=== Student Training ==="
+echo "=== Segmentation Distillation Training ==="
 echo "Node: $(hostname)"
 echo "Job ID: ${SLURM_JOB_ID}"
 echo "Epochs: ${EPOCHS}"
 echo "Batch size: ${BATCH}"
 echo "LR: ${LR}"
-echo "Feature weight: ${FEAT_W}, Response weight: ${RESP_W}"
-echo "Temperature: ${TEMP}, Distance: ${FEAT_DIST}"
+echo "Loss weights: att=${ATT_W}, mim=${MIM_W}, rel=${REL_W}"
+echo "Student: base_ch=${BASE_CH}, depth=${DEPTH}"
 echo ""
 
 mkdir -p "${OUT_DIR}"
@@ -78,10 +79,11 @@ singularity exec --nv \
             --epochs ${EPOCHS} \
             --batch-size ${BATCH} \
             --lr ${LR} \
-            --feature-weight ${FEAT_W} \
-            --response-weight ${RESP_W} \
-            --temperature ${TEMP} \
-            --feature-distance '${FEAT_DIST}' \
+            --attention-weight ${ATT_W} \
+            --mimicry-weight ${MIM_W} \
+            --relation-weight ${REL_W} \
+            --base-channels ${BASE_CH} \
+            --depth ${DEPTH} \
             --output-dir '${OUT_DIR}' \
             --save-interval 10 \
             \${RESUME_ARG}
