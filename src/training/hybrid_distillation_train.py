@@ -1,6 +1,9 @@
 """
-Hybrid Knowledge Distillation Training.
-Combines response-based (logit) distillation and feature-based (intermediate layer) distillation.
+Offline segmentation knowledge distillation training.
+
+Uses pre-extracted teacher predictions (features + masks) from chunk files.
+Trains a U-Net student with CBAM attention using chunk-epoch loading.
+Losses: attention transfer + feature mimicry + Gram-matrix relation.
 """
 import torch
 import torch.nn as nn
@@ -14,70 +17,118 @@ from tqdm import tqdm
 import argparse
 
 import sys
-from pathlib import Path
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from teacher.hybrid_predictions import load_hybrid_predictions, HybridTeacherPrediction
-from student.student_model import StudentYOLO
+from teacher.hybrid_predictions import HybridTeacherPrediction
+from student.student_model import StudentSegmentation
+from training.distillation_loss import SegmentationDistillationLoss
 from PIL import Image
 import torchvision.transforms as transforms
 
 
-class ChunkDataset(Dataset):
-    """Dataset wrapping a single chunk of predictions already loaded in memory."""
+def select_teacher_layers(features: Dict[str, torch.Tensor],
+                          num_scales: int = 3) -> Tuple[List[str], List[int]]:
+    """Select teacher feature layers for distillation.
 
-    def __init__(
-        self,
-        predictions: List[HybridTeacherPrediction],
-        image_root: Optional[str] = None,
-        transform: Optional[transforms.Compose] = None,
-        target_size: Tuple[int, int] = (640, 640)
-    ):
+    Picks `num_scales` layers sorted by layer index, taking the last N (deepest).
+
+    Args:
+        features: Dict of {layer_name: tensor} from one prediction
+        num_scales: How many scales to use
+
+    Returns:
+        (layer_names, channel_counts) ordered fine to coarse
+    """
+    layers = []
+    for name, tensor in features.items():
+        parts = name.split(".")
+        idx = int(parts[-1]) if parts[-1].isdigit() else 0
+        channels = tensor.shape[0]  # stored as [C, H, W] per-image
+        layers.append((idx, name, channels))
+
+    layers.sort(key=lambda x: x[0])
+
+    selected = layers[-num_scales:] if len(layers) > num_scales else layers
+    names = [l[1] for l in selected]
+    channels = [l[2] for l in selected]
+    return names, channels
+
+
+def compute_teacher_attention(feat: torch.Tensor) -> torch.Tensor:
+    """Compute spatial attention from teacher features.
+
+    Mean of absolute activations across channels, min-max normalized to [0,1].
+
+    Args:
+        feat: [B, C, H, W] or [C, H, W]
+    Returns:
+        [B, 1, H, W] attention map
+    """
+    if feat.dim() == 3:
+        feat = feat.unsqueeze(0)
+    att = feat.abs().mean(dim=1, keepdim=True)
+    b = att.shape[0]
+    flat = att.view(b, -1)
+    mn = flat.min(1)[0].view(b, 1, 1, 1)
+    mx = flat.max(1)[0].view(b, 1, 1, 1)
+    return (att - mn) / (mx - mn + 1e-8)
+
+
+class ChunkDataset(Dataset):
+    """Dataset wrapping a single chunk of predictions."""
+
+    def __init__(self, predictions: List[HybridTeacherPrediction],
+                 teacher_layer_names: List[str],
+                 image_root: Optional[str] = None,
+                 target_size: Tuple[int, int] = (640, 640)):
         self.predictions = predictions
+        self.teacher_layer_names = teacher_layer_names
         self.image_root = Path(image_root) if image_root else None
         self.target_size = target_size
+        self.transform = transforms.Compose([
+            transforms.Resize(target_size),
+            transforms.ToTensor(),
+        ])
 
-        if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Resize(target_size),
-                transforms.ToTensor(),
-            ])
-        else:
-            self.transform = transform
-
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.predictions)
 
-    def __getitem__(self, idx: int) -> Dict:
-        prediction = self.predictions[idx]
+    def __getitem__(self, idx):
+        pred = self.predictions[idx]
 
-        image_path = Path(prediction.image_path)
+        image_path = Path(pred.image_path)
         if self.image_root and not image_path.is_absolute():
             image_path = self.image_root / image_path
+        image = self.transform(Image.open(image_path).convert('RGB'))
 
-        image = Image.open(image_path).convert('RGB')
-        if self.transform:
-            image = self.transform(image)
+        teacher_feats = []
+        for name in self.teacher_layer_names:
+            if name in pred.features:
+                teacher_feats.append(pred.features[name])
+            else:
+                raise KeyError(f"Layer {name} not in prediction. Available: {list(pred.features.keys())}")
 
-        teacher_features = {
-            k: v for k, v in prediction.features.items()
-        }
-
-        sample = {
+        return {
             'image': image,
-            'teacher_features': teacher_features,
-            'image_path': str(image_path)
+            'teacher_features': teacher_feats,
         }
 
-        if prediction.raw_logits is not None:
-            sample['teacher_logits'] = prediction.raw_logits
 
-        return sample
+def collate_fn(batch):
+    """Custom collate that stacks images and teacher feature lists."""
+    images = torch.stack([b['image'] for b in batch])
+    num_scales = len(batch[0]['teacher_features'])
+    teacher_feats = []
+    for s in range(num_scales):
+        teacher_feats.append(torch.stack([b['teacher_features'][s] for b in batch]))
+    return {
+        'image': images,
+        'teacher_features': teacher_feats,
+    }
 
 
 def discover_chunk_files(predictions_path: str) -> List[Path]:
-    """Discover prediction files — supports chunk directory or single file."""
+    """Discover prediction files -- supports chunk directory or single file."""
     pred_path = Path(predictions_path)
 
     if pred_path.is_file():
@@ -85,10 +136,8 @@ def discover_chunk_files(predictions_path: str) -> List[Path]:
 
     if pred_path.is_dir():
         chunks = sorted(pred_path.glob("chunk_*.torch"))
-        # Also include old-format final files from workers
         for f in sorted(pred_path.glob("hybrid_teacher_predictions_worker*.torch")):
             chunks.append(f)
-        # Also include single merged file
         merged = pred_path / "hybrid_teacher_predictions.torch"
         if merged.exists():
             chunks.append(merged)
@@ -98,298 +147,40 @@ def discover_chunk_files(predictions_path: str) -> List[Path]:
     raise FileNotFoundError(f"No prediction files found at {predictions_path}")
 
 
-class HybridDistillationLoss(nn.Module):
-    """
-    Combined loss for hybrid knowledge distillation.
-    Includes both feature-based and response-based components.
-    """
-
-    def __init__(
-        self,
-        feature_weight: float = 1.0,
-        response_weight: float = 1.0,
-        temperature: float = 3.0,
-        feature_distance: str = "mse"  # "mse", "cosine", or "at"
-    ):
-        """
-        Args:
-            feature_weight: Weight for feature-based loss
-            response_weight: Weight for response-based (logit) loss
-            temperature: Temperature for softening logits
-            feature_distance: Distance metric for features
-                - "mse": Mean squared error
-                - "cosine": Cosine similarity
-                - "at": Attention transfer (spatial attention maps)
-        """
-        super().__init__()
-
-        self.feature_weight = feature_weight
-        self.response_weight = response_weight
-        self.temperature = temperature
-        self.feature_distance = feature_distance
-
-        print(f"Hybrid Distillation Loss initialized:")
-        print(f"  Feature weight: {feature_weight}")
-        print(f"  Response weight: {response_weight}")
-        print(f"  Temperature: {temperature}")
-        print(f"  Feature distance: {feature_distance}")
-
-    def forward(
-        self,
-        student_output: Dict[str, torch.Tensor],
-        teacher_features: Dict[str, torch.Tensor],
-        teacher_logits: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Compute hybrid distillation loss.
-
-        Args:
-            student_output: Dict with 'predictions', 'features', 'adapted_features'
-            teacher_features: Dict of teacher intermediate features
-            teacher_logits: Teacher output logits (optional)
-
-        Returns:
-            Tuple of (total_loss, loss_dict)
-        """
-        losses = {}
-        total_loss = torch.tensor(0.0, device=student_output['predictions'].device, requires_grad=True)
-
-        # 1. Feature-based distillation loss
-        if 'adapted_features' in student_output and teacher_features:
-            feature_loss = self._compute_feature_loss(
-                student_output['adapted_features'],
-                teacher_features
-            )
-            losses['feature_loss'] = feature_loss.item()
-            total_loss += self.feature_weight * feature_loss
-
-        # 2. Response-based distillation loss (logits)
-        if teacher_logits is not None and 'predictions' in student_output:
-            response_loss = self._compute_response_loss(
-                student_output['predictions'],
-                teacher_logits
-            )
-            losses['response_loss'] = response_loss.item()
-            total_loss += self.response_weight * response_loss
-
-        losses['total_loss'] = total_loss.item() if isinstance(total_loss, torch.Tensor) else total_loss
-
-        return total_loss, losses
-
-    def _compute_feature_loss(
-        self,
-        student_features: Dict[str, torch.Tensor],
-        teacher_features: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
-        """
-        Compute feature-based distillation loss.
-        Matches intermediate representations between student and teacher.
-        """
-        feature_losses = []
-
-        # Match features from adapted student layers to teacher layers
-        for student_name, student_feat in student_features.items():
-            # Find corresponding teacher feature
-            # student_name format: "stage1_to_model_4" (dots replaced with underscores for nn.ModuleDict)
-            adapter_suffix = student_name.split('_to_')[-1] if '_to_' in student_name else None
-            if adapter_suffix is None:
-                continue
-
-            # Try both dotted and underscored versions to find the teacher layer
-            teacher_layer = None
-            for key in teacher_features:
-                if key == adapter_suffix or key.replace('.', '_') == adapter_suffix:
-                    teacher_layer = key
-                    break
-
-            if teacher_layer and teacher_layer in teacher_features:
-                teacher_feat = teacher_features[teacher_layer]
-
-                # Ensure same device
-                teacher_feat = teacher_feat.to(student_feat.device)
-
-                # Resize if necessary
-                if student_feat.shape[2:] != teacher_feat.shape[2:]:
-                    teacher_feat = F.interpolate(
-                        teacher_feat,
-                        size=student_feat.shape[2:],
-                        mode='bilinear',
-                        align_corners=False
-                    )
-
-                # Compute distance based on selected metric
-                if self.feature_distance == "mse":
-                    loss = F.mse_loss(student_feat, teacher_feat)
-
-                elif self.feature_distance == "cosine":
-                    # Cosine similarity loss
-                    student_norm = F.normalize(student_feat, p=2, dim=1)
-                    teacher_norm = F.normalize(teacher_feat, p=2, dim=1)
-                    loss = 1.0 - F.cosine_similarity(
-                        student_norm.view(student_norm.size(0), -1),
-                        teacher_norm.view(teacher_norm.size(0), -1)
-                    ).mean()
-
-                elif self.feature_distance == "at":
-                    # Attention Transfer: match spatial attention maps
-                    student_attn = self._compute_attention_map(student_feat)
-                    teacher_attn = self._compute_attention_map(teacher_feat)
-                    loss = F.mse_loss(student_attn, teacher_attn)
-
-                else:
-                    loss = F.mse_loss(student_feat, teacher_feat)
-
-                feature_losses.append(loss)
-
-        if feature_losses:
-            return sum(feature_losses) / len(feature_losses)
-        else:
-            return torch.tensor(0.0)
-
-    def _compute_attention_map(self, feature_map: torch.Tensor) -> torch.Tensor:
-        """
-        Compute spatial attention map from feature map.
-        Used for Attention Transfer (AT) distillation.
-        """
-        # Sum across channel dimension and normalize
-        attention = torch.sum(feature_map ** 2, dim=1, keepdim=True)
-        attention = F.normalize(attention.view(attention.size(0), -1), p=2, dim=1)
-        attention = attention.view(attention.size(0), 1, feature_map.size(2), feature_map.size(3))
-        return attention
-
-    def _compute_response_loss(
-        self,
-        student_logits: torch.Tensor,
-        teacher_logits: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Compute response-based distillation loss (logit matching).
-        Uses KL divergence with temperature softening.
-        """
-        # Ensure same device
-        teacher_logits = teacher_logits.to(student_logits.device)
-
-        # Resize if necessary
-        if student_logits.shape != teacher_logits.shape:
-            # For detection, might need more sophisticated matching
-            # Here we use simple interpolation
-            if len(teacher_logits.shape) == 4:  # [B, C, H, W]
-                teacher_logits = F.interpolate(
-                    teacher_logits,
-                    size=student_logits.shape[2:],
-                    mode='bilinear',
-                    align_corners=False
-                )
-
-        # Apply temperature and compute KL divergence
-        T = self.temperature
-
-        # Softmax with temperature
-        student_soft = F.log_softmax(student_logits / T, dim=1)
-        teacher_soft = F.softmax(teacher_logits / T, dim=1)
-
-        # KL divergence
-        kl_loss = F.kl_div(
-            student_soft,
-            teacher_soft,
-            reduction='batchmean'
-        ) * (T * T)  # Scale by T^2
-
-        return kl_loss
-
-
-def train_epoch(
-    model: nn.Module,
-    dataloader: DataLoader,
-    criterion: HybridDistillationLoss,
-    optimizer: torch.optim.Optimizer,
-    device: str,
-    epoch: int
-) -> Dict[str, float]:
-    """Train for one epoch."""
-    model.train()
-
-    total_loss = 0.0
-    feature_loss_sum = 0.0
-    response_loss_sum = 0.0
-    num_batches = 0
-
-    progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}")
-
-    for batch in progress_bar:
-        images = batch['image'].to(device)
-        teacher_features = {
-            k: v.to(device) for k, v in batch['teacher_features'].items()
-        }
-        teacher_logits = batch.get('teacher_logits')
-        if teacher_logits is not None:
-            teacher_logits = teacher_logits.to(device)
-
-        # Forward pass
-        optimizer.zero_grad()
-
-        student_output = model(images, return_features=True)
-
-        # Compute loss
-        loss, loss_dict = criterion(
-            student_output,
-            teacher_features,
-            teacher_logits
-        )
-
-        # Backward pass
-        loss.backward()
-        optimizer.step()
-
-        # Track metrics
-        total_loss += loss_dict['total_loss']
-        feature_loss_sum += loss_dict.get('feature_loss', 0.0)
-        response_loss_sum += loss_dict.get('response_loss', 0.0)
-        num_batches += 1
-
-        # Update progress bar
-        progress_bar.set_postfix({
-            'loss': f"{loss_dict['total_loss']:.4f}",
-            'feat': f"{loss_dict.get('feature_loss', 0.0):.4f}",
-            'resp': f"{loss_dict.get('response_loss', 0.0):.4f}"
-        })
-
-    return {
-        'total_loss': total_loss / num_batches,
-        'feature_loss': feature_loss_sum / num_batches,
-        'response_loss': response_loss_sum / num_batches
-    }
-
-
 def main(args):
-    """Main training function with chunk-epoch training for memory efficiency."""
+    """Main training function with chunk-epoch training."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Using device: {device}, GPUs available: {n_gpus}\n")
 
-    # Discover prediction chunk files
+    # Discover chunk files
     chunk_files = discover_chunk_files(args.predictions)
     print(f"Found {len(chunk_files)} prediction file(s)")
 
-    # Load first chunk briefly to get teacher feature shapes
-    print("Loading first chunk to determine feature shapes...")
+    # Load first chunk to determine teacher feature layout
+    print("Loading first chunk to determine teacher feature shapes...")
     first_preds = torch.load(chunk_files[0], weights_only=False)
     first_preds = [p for p in first_preds if p.features]
-    teacher_shapes = {
-        k: (1, *v.shape) for k, v in first_preds[0].features.items()
-    }
-    print(f"Teacher feature shapes: {teacher_shapes}")
+    if not first_preds:
+        raise RuntimeError("First chunk has no predictions with features")
+
+    teacher_layer_names, teacher_channels = select_teacher_layers(
+        first_preds[0].features, num_scales=3
+    )
+    print(f"Selected teacher layers: {teacher_layer_names}")
+    print(f"Teacher channels: {teacher_channels}")
     del first_preds
 
     # Create student model
-    print("Creating student model...")
-    model = StudentYOLO(
-        num_classes=args.num_classes,
-        teacher_feature_shapes=teacher_shapes,
-        use_feature_adapters=True
+    print("\nCreating student segmentation model...")
+    model = StudentSegmentation(
+        in_channels=3,
+        base_channels=args.base_channels,
+        depth=args.depth,
+        teacher_channels=teacher_channels,
     )
-
     model = model.to(device)
+
     if n_gpus > 1:
         print(f"Using DataParallel across {n_gpus} GPUs")
         model = torch.nn.DataParallel(model)
@@ -397,29 +188,24 @@ def main(args):
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params:,}\n")
 
-    # Create loss function
-    criterion = HybridDistillationLoss(
-        feature_weight=args.feature_weight,
-        response_weight=args.response_weight,
-        temperature=args.temperature,
-        feature_distance=args.feature_distance
+    # Loss function
+    criterion = SegmentationDistillationLoss(
+        attention_weight=args.attention_weight,
+        mimicry_weight=args.mimicry_weight,
+        relation_weight=args.relation_weight,
     )
 
-    # Create optimizer
+    # Optimizer
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay
+        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
 
-    # Learning rate scheduler
+    # Scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=args.epochs,
-        eta_min=args.lr * 0.01
+        optimizer, T_max=args.epochs, eta_min=args.lr * 0.01
     )
 
-    # Optionally resume from a previous training checkpoint
+    # Resume
     start_epoch = 1
     best_loss = float('inf')
     history = []
@@ -437,31 +223,27 @@ def main(args):
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_loss = checkpoint.get('loss', float('inf'))
-        print(f"Resumed from epoch {checkpoint['epoch']}, best loss so far: {best_loss:.4f}\n")
+        print(f"Resumed from epoch {checkpoint['epoch']}, best loss: {best_loss:.4f}\n")
     elif args.resume:
         print(f"Warning: --resume path '{args.resume}' not found, starting from scratch.\n")
 
-    # Training loop — chunk-epoch: iterate through chunks per epoch
-    print(f"\nStarting training from epoch {start_epoch} to {args.epochs}...")
-    print(f"Training on {len(chunk_files)} chunks (loaded one at a time to save memory)\n")
-
+    # Training
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Starting training from epoch {start_epoch} to {args.epochs}...")
+    print(f"Training on {len(chunk_files)} chunks (one at a time)\n")
 
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
 
-        # Shuffle chunk order each epoch for better generalization
         shuffled_chunks = chunk_files.copy()
         random.shuffle(shuffled_chunks)
 
-        epoch_loss = 0.0
-        epoch_feature_loss = 0.0
-        epoch_response_loss = 0.0
+        epoch_losses = {"attention": 0.0, "mimicry": 0.0, "relation": 0.0, "total": 0.0}
         epoch_batches = 0
 
         for chunk_idx, chunk_file in enumerate(shuffled_chunks):
-            # Load chunk into memory
             preds = torch.load(chunk_file, weights_only=False)
             preds = [p for p in preds if p.features]
 
@@ -470,16 +252,17 @@ def main(args):
                 continue
 
             chunk_dataset = ChunkDataset(
-                preds,
+                preds, teacher_layer_names,
                 image_root=args.image_root,
-                target_size=(args.img_size, args.img_size)
+                target_size=(args.img_size, args.img_size),
             )
             chunk_loader = DataLoader(
                 chunk_dataset,
                 batch_size=args.batch_size,
                 shuffle=True,
                 num_workers=args.num_workers,
-                pin_memory=True
+                pin_memory=True,
+                collate_fn=collate_fn,
             )
 
             desc = f"Epoch {epoch} chunk {chunk_idx+1}/{len(shuffled_chunks)}"
@@ -487,92 +270,103 @@ def main(args):
 
             for batch in progress_bar:
                 images = batch['image'].to(device)
-                teacher_features = {
-                    k: v.to(device) for k, v in batch['teacher_features'].items()
-                }
-                teacher_logits = batch.get('teacher_logits')
-                if teacher_logits is not None:
-                    teacher_logits = teacher_logits.to(device)
+                teacher_feats = [f.to(device) for f in batch['teacher_features']]
 
+                # Compute teacher attention from pre-extracted features
+                teacher_atts = [compute_teacher_attention(f) for f in teacher_feats]
+
+                # Student forward
                 optimizer.zero_grad()
-                student_output = model(images, return_features=True)
+                seg_output, distill_info = model(images)
+
+                projected = distill_info['projected']
+                student_atts = distill_info['attention_maps']
+
+                # Align scales
+                n = len(projected)
+                t_feats = teacher_feats[-n:]
+                t_atts = teacher_atts[-n:]
+
+                # Loss
                 loss, loss_dict = criterion(
-                    student_output, teacher_features, teacher_logits
+                    student_atts=student_atts,
+                    teacher_atts=t_atts,
+                    projected_student_feats=projected,
+                    teacher_feats=t_feats,
                 )
+
                 loss.backward()
+
+                if args.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+
                 optimizer.step()
 
-                epoch_loss += loss_dict['total_loss']
-                epoch_feature_loss += loss_dict.get('feature_loss', 0.0)
-                epoch_response_loss += loss_dict.get('response_loss', 0.0)
+                for k in epoch_losses:
+                    epoch_losses[k] += loss_dict.get(k, 0.0)
                 epoch_batches += 1
 
                 progress_bar.set_postfix({
-                    'loss': f"{loss_dict['total_loss']:.4f}",
-                    'feat': f"{loss_dict.get('feature_loss', 0.0):.4f}",
+                    'loss': f"{loss_dict['total']:.4f}",
+                    'att': f"{loss_dict['attention']:.4f}",
+                    'mim': f"{loss_dict['mimicry']:.4f}",
                 })
 
-            # Free chunk memory
             del preds, chunk_dataset, chunk_loader
             torch.cuda.empty_cache()
 
-        # Update scheduler
         scheduler.step()
 
-        # Log epoch metrics
-        metrics = {
-            'total_loss': epoch_loss / max(epoch_batches, 1),
-            'feature_loss': epoch_feature_loss / max(epoch_batches, 1),
-            'response_loss': epoch_response_loss / max(epoch_batches, 1),
-        }
+        # Epoch metrics
+        metrics = {k: v / max(epoch_batches, 1) for k, v in epoch_losses.items()}
 
         print(f"\nEpoch {epoch}/{args.epochs}")
-        print(f"  Total Loss: {metrics['total_loss']:.4f}")
-        print(f"  Feature Loss: {metrics['feature_loss']:.4f}")
-        print(f"  Response Loss: {metrics['response_loss']:.4f}")
-        print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
-        print(f"  Batches: {epoch_batches}")
+        print(f"  Total: {metrics['total']:.4f}  Att: {metrics['attention']:.4f}"
+              f"  Mim: {metrics['mimicry']:.4f}  Rel: {metrics['relation']:.4f}")
+        print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}  Batches: {epoch_batches}")
 
-        history.append({
-            'epoch': epoch,
-            **metrics,
-            'lr': optimizer.param_groups[0]['lr']
-        })
+        history.append({'epoch': epoch, **metrics, 'lr': optimizer.param_groups[0]['lr']})
 
-        # Save state dict without 'module.' prefix for portability
-        raw_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+        raw_state = (model.module.state_dict()
+                     if isinstance(model, torch.nn.DataParallel)
+                     else model.state_dict())
 
-        # Save best model
-        if metrics['total_loss'] < best_loss:
-            best_loss = metrics['total_loss']
+        if metrics['total'] < best_loss:
+            best_loss = metrics['total']
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': raw_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_loss,
-                'args': vars(args)
+                'teacher_channels': teacher_channels,
+                'teacher_layer_names': teacher_layer_names,
+                'args': vars(args),
             }, output_dir / 'best_model.pt')
-            print(f"  → Saved best model (loss: {best_loss:.4f})")
+            print(f"  -> Saved best model (loss: {best_loss:.4f})")
 
-        # Save checkpoint
         if epoch % args.save_interval == 0:
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': raw_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-                'loss': metrics['total_loss'],
-                'args': vars(args)
+                'loss': metrics['total'],
+                'teacher_channels': teacher_channels,
+                'teacher_layer_names': teacher_layer_names,
+                'args': vars(args),
             }, output_dir / f'checkpoint_epoch_{epoch}.pt')
 
     # Save final model
-    raw_state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+    raw_state = (model.module.state_dict()
+                 if isinstance(model, torch.nn.DataParallel)
+                 else model.state_dict())
     torch.save({
         'model_state_dict': raw_state,
-        'args': vars(args)
+        'teacher_channels': teacher_channels,
+        'teacher_layer_names': teacher_layer_names,
+        'args': vars(args),
     }, output_dir / 'final_model.pt')
 
-    # Save training history
     with open(output_dir / 'training_history.json', 'w') as f:
         json.dump(history, f, indent=2)
 
@@ -582,117 +376,41 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Hybrid Knowledge Distillation Training"
-    )
+    parser = argparse.ArgumentParser(description="Segmentation Knowledge Distillation Training")
 
-    # Data arguments
-    parser.add_argument(
-        "--predictions",
-        type=str,
-        required=True,
-        help="Path to hybrid teacher predictions (.pt file)"
-    )
-    parser.add_argument(
-        "--image-root",
-        type=str,
-        default=None,
-        help="Root directory for images"
-    )
-    parser.add_argument(
-        "--img-size",
-        type=int,
-        default=640,
-        help="Input image size"
-    )
+    # Data
+    parser.add_argument("--predictions", type=str, required=True,
+                        help="Path to predictions directory or file")
+    parser.add_argument("--image-root", type=str, default=None,
+                        help="Root directory for images")
+    parser.add_argument("--img-size", type=int, default=640,
+                        help="Input image size")
 
-    # Model arguments
-    parser.add_argument(
-        "--num-classes",
-        type=int,
-        default=1,
-        help="Number of object classes"
-    )
+    # Student architecture
+    parser.add_argument("--base-channels", type=int, default=32,
+                        help="Base channel count for U-Net encoder")
+    parser.add_argument("--depth", type=int, default=4,
+                        help="Number of encoder/decoder levels")
 
-    # Training arguments
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=50,
-        help="Number of training epochs"
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=16,
-        help="Batch size"
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=1e-3,
-        help="Learning rate"
-    )
-    parser.add_argument(
-        "--weight-decay",
-        type=float,
-        default=1e-4,
-        help="Weight decay"
-    )
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=4,
-        help="Number of data loading workers"
-    )
+    # Training
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-5)
+    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--grad-clip", type=float, default=None,
+                        help="Gradient clipping max norm")
 
-    # Distillation arguments
-    parser.add_argument(
-        "--feature-weight",
-        type=float,
-        default=1.0,
-        help="Weight for feature distillation loss"
-    )
-    parser.add_argument(
-        "--response-weight",
-        type=float,
-        default=1.0,
-        help="Weight for response distillation loss"
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=3.0,
-        help="Temperature for softening logits"
-    )
-    parser.add_argument(
-        "--feature-distance",
-        type=str,
-        choices=["mse", "cosine", "at"],
-        default="mse",
-        help="Feature distance metric"
-    )
+    # Distillation loss weights
+    parser.add_argument("--attention-weight", type=float, default=1.0)
+    parser.add_argument("--mimicry-weight", type=float, default=0.5)
+    parser.add_argument("--relation-weight", type=float, default=0.5)
 
-    # Output arguments
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="./trained_models",
-        help="Output directory for models"
-    )
-    parser.add_argument(
-        "--save-interval",
-        type=int,
-        default=10,
-        help="Save checkpoint every N epochs"
-    )
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Path to a training checkpoint (.pt) to resume from"
-    )
+    # Output
+    parser.add_argument("--output-dir", type=str, default="./trained_models")
+    parser.add_argument("--save-interval", type=int, default=10)
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Checkpoint to resume from")
 
     args = parser.parse_args()
-
     main(args)
