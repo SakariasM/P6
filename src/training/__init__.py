@@ -1,15 +1,14 @@
-"""
-Training pipeline for hybrid knowledge distillation.
-Combines feature-based and response-based losses.
-"""
+"""Training pipeline for segmentation knowledge distillation."""
+from .distillation_loss import (
+    AttentionTransferLoss,
+    FeatureMimicryLoss,
+    RelationDistillationLoss,
+    SegmentationDistillationLoss,
+)
 from .hybrid_distillation_train import (
     ChunkDataset,
-    HybridDistillationLoss,
-    train_epoch
+    discover_chunk_files,
+    select_teacher_layers,
+    compute_teacher_attention,
+    collate_fn,
 )
-
-__all__ = [
-    'ChunkDataset',
-    'HybridDistillationLoss',
-    'train_epoch',
-]
