@@ -1,126 +1,74 @@
-"""Tests for student model architecture.
-Validates shapes, forward pass, feature adapters, and GPU compatibility.
-"""
-import pytest
 import torch
-from student.student_model import StudentYOLO, FeatureMatchingLayer
+import pytest
+from student.student_model import StudentSegmentation
+
+TEACHER_CHANNELS = [128, 128, 256]
 
 
-class TestFeatureMatchingLayer:
-    def test_channel_adaptation(self):
-        adapter = FeatureMatchingLayer(64, 128)
-        x = torch.randn(2, 64, 80, 80)
-        out = adapter(x)
-        assert out.shape == (2, 128, 80, 80)
-
-    def test_no_bn(self):
-        adapter = FeatureMatchingLayer(64, 128, use_bn=False)
-        x = torch.randn(2, 64, 80, 80)
-        out = adapter(x)
-        assert out.shape == (2, 128, 80, 80)
-
-    def test_gradient_flows(self):
-        adapter = FeatureMatchingLayer(64, 128)
-        x = torch.randn(2, 64, 80, 80, requires_grad=True)
-        out = adapter(x)
-        loss = out.sum()
-        loss.backward()
-        assert x.grad is not None
+def test_student_output_shape():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 256, 256)
+    output, distill_info = model(x)
+    assert output.shape == (2, 1, 256, 256), f"Expected (2,1,256,256), got {output.shape}"
 
 
-class TestStudentYOLO:
-    def test_forward_no_features(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes)
-        x = torch.randn(2, 3, 640, 640)
-        out = model(x, return_features=False)
-        assert "predictions" in out
-        assert out["predictions"].shape[0] == 2  # batch size
-        assert out["predictions"].shape[1] == 85  # 5 + 80 classes
-
-    def test_forward_with_features(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes)
-        x = torch.randn(2, 3, 640, 640)
-        out = model(x, return_features=True)
-
-        assert "predictions" in out
-        assert "features" in out
-        assert "adapted_features" in out
-
-        # Check we get 3 feature maps (stage1, stage2, stage3)
-        assert len(out["features"]) == 3
-
-        # Check adapted features exist
-        assert len(out["adapted_features"]) > 0
-
-    def test_adapted_feature_shapes_match_teacher(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes)
-        x = torch.randn(1, 3, 640, 640)
-        out = model(x, return_features=True)
-
-        for name, feat in out["adapted_features"].items():
-            adapter_suffix = name.split("_to_")[-1]
-            # Find matching teacher layer (dots replaced with underscores)
-            teacher_layer = None
-            for k in mock_teacher_shapes:
-                if k.replace(".", "_") == adapter_suffix:
-                    teacher_layer = k
-                    break
-            assert teacher_layer is not None, f"No teacher match for {name}"
-            expected_channels = mock_teacher_shapes[teacher_layer][1]
-            assert feat.shape[1] == expected_channels, (
-                f"{name}: got {feat.shape[1]} channels, expected {expected_channels}"
-            )
-
-    def test_no_adapters(self):
-        model = StudentYOLO(num_classes=80, use_feature_adapters=False)
-        x = torch.randn(1, 3, 640, 640)
-        out = model(x, return_features=True)
-        assert "adapted_features" not in out or len(out["adapted_features"]) == 0
-
-    def test_backward_pass(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes)
-        x = torch.randn(1, 3, 640, 640)
-        out = model(x, return_features=True)
-
-        loss = out["predictions"].sum()
-        for feat in out["adapted_features"].values():
-            loss += feat.sum()
-
-        loss.backward()
-
-        # Check all parameters received gradients
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                assert param.grad is not None, f"No gradient for {name}"
-
-    def test_different_input_sizes(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes)
-        for size in [320, 416, 640]:
-            x = torch.randn(1, 3, size, size)
-            out = model(x, return_features=False)
-            assert out["predictions"].shape[0] == 1
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda_forward(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes).cuda()
-        x = torch.randn(2, 3, 640, 640).cuda()
-        out = model(x, return_features=True)
-
-        assert out["predictions"].device.type == "cuda"
-        for feat in out["features"].values():
-            assert feat.device.type == "cuda"
-        for feat in out["adapted_features"].values():
-            assert feat.device.type == "cuda"
-
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-    def test_cuda_backward(self, mock_teacher_shapes):
-        model = StudentYOLO(num_classes=80, teacher_feature_shapes=mock_teacher_shapes).cuda()
-        x = torch.randn(1, 3, 640, 640).cuda()
-        out = model(x, return_features=True)
-        loss = out["predictions"].sum()
-        loss.backward()
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                assert param.grad is not None, f"No gradient for {name} on CUDA"
+def test_student_output_range():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 256, 256)
+    output, _ = model(x)
+    assert output.min() >= 0.0
+    assert output.max() <= 1.0
 
 
+def test_distill_info_keys():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 256, 256)
+    _, distill_info = model(x)
+    assert "features" in distill_info
+    assert "attention_maps" in distill_info
+    assert "projected" in distill_info
+
+
+def test_distill_info_scales():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 256, 256)
+    _, distill_info = model(x)
+    assert len(distill_info["features"]) == 3
+    assert len(distill_info["attention_maps"]) == 3
+    assert len(distill_info["projected"]) == 3
+
+
+def test_projected_channels_match_teacher():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 256, 256)
+    _, distill_info = model(x)
+    for proj, t_ch in zip(distill_info["projected"], TEACHER_CHANNELS):
+        assert proj.shape[1] == t_ch, f"Expected {t_ch} channels, got {proj.shape[1]}"
+
+
+def test_attention_maps_are_spatial():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 256, 256)
+    _, distill_info = model(x)
+    for att in distill_info["attention_maps"]:
+        assert att.shape[1] == 1
+        assert att.min() >= 0.0
+        assert att.max() <= 1.0
+
+
+def test_student_is_differentiable():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    x = torch.randn(2, 3, 128, 128)
+    output, distill_info = model(x)
+    loss = output.mean() + sum(p.mean() for p in distill_info["projected"])
+    loss.backward()
+    for p in model.parameters():
+        if p.requires_grad:
+            assert p.grad is not None
+            break
+
+
+def test_student_param_count():
+    model = StudentSegmentation(teacher_channels=TEACHER_CHANNELS)
+    total = sum(p.numel() for p in model.parameters())
+    assert total < 25_000_000, f"Model too large: {total:,} params"
