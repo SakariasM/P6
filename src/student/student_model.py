@@ -1,323 +1,199 @@
 """
-Student model architecture for hybrid knowledge distillation.
-Designed to match teacher's intermediate features and final predictions.
+U-Net segmentation student with CBAM attention and distillation hooks.
+
+Input: [B, 3, H, W] RGB image
+Output: [B, 1, H, W] person segmentation mask (sigmoid)
+
+Architecture (depth=4, base_channels=32):
+
+  initial  -> [B,  32, H,   W  ]
+  enc[0]   -> [B,  64, H/2, W/2]  + CBAM
+  enc[1]   -> [B, 128, H/4, W/4]  + CBAM
+  enc[2]   -> [B, 256, H/8, W/8]  + CBAM
+  enc[3]   -> [B, 512, H/16,W/16] + CBAM
+  bottleneck (dilated residuals)
+  dec[0..3] with skip connections
+  output   -> [B, 1, H, W]  (Sigmoid)
+
+Distillation info exposes features, attention maps, and projected features
+from the last N encoder levels aligned to the teacher's feature scales.
 """
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional, Tuple
+import torch.nn.functional as F
+from typing import List, Optional, Tuple
+
+from student.attention import CBAM, AttentionProjection
 
 
-class FeatureMatchingLayer(nn.Module):
-    """
-    Adapter layer to match student features to teacher feature dimensions.
-    Uses 1x1 convolutions for channel alignment.
-    """
-
-    def __init__(
-        self,
-        student_channels: int,
-        teacher_channels: int,
-        use_bn: bool = True
-    ):
-        """
-        Args:
-            student_channels: Number of channels in student feature map
-            teacher_channels: Number of channels in teacher feature map
-            use_bn: Whether to use batch normalization
-        """
+class DownBlock(nn.Module):
+    """Encoder: stride-2 conv -> BN -> LeakyReLU -> conv -> BN -> LeakyReLU."""
+    def __init__(self, in_ch, out_ch):
         super().__init__()
-
-        self.adapter = nn.Sequential(
-            nn.Conv2d(student_channels, teacher_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(teacher_channels) if use_bn else nn.Identity(),
+        self.block = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.LeakyReLU(0.2, inplace=True),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.adapter(x)
+    def forward(self, x):
+        return self.block(x)
 
 
-class StudentYOLO(nn.Module):
-    """
-    Lightweight student YOLO model for knowledge distillation.
-    Includes feature matching layers at intermediate stages.
-    """
-
-    def __init__(
-        self,
-        num_classes: int = 1,
-        teacher_feature_shapes: Optional[Dict[str, Tuple]] = None,
-        use_feature_adapters: bool = True
-    ):
-        """
-        Args:
-            num_classes: Number of object classes
-            teacher_feature_shapes: Dictionary mapping layer names to feature shapes
-                                   from teacher model (for adapter creation)
-            use_feature_adapters: Whether to use feature adapters for distillation
-        """
+class UpBlock(nn.Module):
+    """Decoder: upsample 2x -> cat(skip) -> conv -> BN -> ReLU -> conv -> BN -> ReLU."""
+    def __init__(self, in_ch, out_ch):
         super().__init__()
-
-        self.num_classes = num_classes
-        self.use_feature_adapters = use_feature_adapters
-
-        # Build lightweight backbone
-        # This is a simplified version - you'd typically use MobileNet, EfficientNet, etc.
-        self.backbone = self._build_backbone()
-
-        # Feature extraction points (intermediate layers)
-        self.feature_layers = ['stage1', 'stage2', 'stage3']
-
-        # Feature adapters for matching teacher dimensions
-        if use_feature_adapters and teacher_feature_shapes:
-            self.feature_adapters = self._build_feature_adapters(teacher_feature_shapes)
-        else:
-            self.feature_adapters = None
-
-        # Detection head (simplified)
-        self.detection_head = self._build_detection_head()
-
-    def _build_backbone(self) -> nn.ModuleDict:
-        """
-        Build lightweight backbone network.
-        In practice, use MobileNetV3, EfficientNet, or similar.
-        """
-        backbone = nn.ModuleDict()
-
-        # Stage 1: Initial convolution
-        backbone['stem'] = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(32),
-            nn.SiLU(inplace=True),
+        self.block = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
         )
 
-        # Stage 1: Early features (P2 level, stride 4)
-        backbone['stage1'] = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.SiLU(inplace=True),
-            self._make_csp_block(64, 64, num_blocks=1),
+    def forward(self, x, skip):
+        x = F.interpolate(x, scale_factor=2, mode='nearest')
+        if x.shape[2:] != skip.shape[2:]:
+            x = F.interpolate(x, size=skip.shape[2:], mode='nearest')
+        x = torch.cat([x, skip], dim=1)
+        return self.block(x)
+
+
+class ResBlock(nn.Module):
+    """Dilated residual block for the bottleneck."""
+    def __init__(self, channels, dilation=1):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=dilation, dilation=dilation, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
         )
+        self.relu = nn.ReLU(inplace=True)
 
-        # Stage 2: Mid features (P3 level, stride 8)
-        backbone['stage2'] = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(128),
-            nn.SiLU(inplace=True),
-            self._make_csp_block(128, 128, num_blocks=2),
-        )
-
-        # Stage 3: Deep features (P4 level, stride 16)
-        backbone['stage3'] = nn.Sequential(
-            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.SiLU(inplace=True),
-            self._make_csp_block(256, 256, num_blocks=2),
-        )
-
-        # Stage 4: Deepest features (P5 level, stride 32)
-        backbone['stage4'] = nn.Sequential(
-            nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(512),
-            nn.SiLU(inplace=True),
-            self._make_csp_block(512, 512, num_blocks=1),
-        )
-
-        return backbone
-
-    def _make_csp_block(self, in_channels: int, out_channels: int, num_blocks: int) -> nn.Module:
-        """Create a simple CSP (Cross Stage Partial) block."""
-        return nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.SiLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.SiLU(inplace=True),
-        )
-
-    def _build_feature_adapters(
-        self,
-        teacher_feature_shapes: Dict[str, Tuple]
-    ) -> nn.ModuleDict:
-        """
-        Build feature adapters to match teacher feature dimensions.
-
-        Args:
-            teacher_feature_shapes: Dict of teacher feature shapes {layer_name: (B, C, H, W)}
-
-        Returns:
-            ModuleDict of adapters
-        """
-        adapters = nn.ModuleDict()
-
-        # Define student feature channels at each stage (ordered small→large)
-        student_stages = [
-            ('stage1', 64),
-            ('stage2', 128),
-            ('stage3', 256),
-        ]
-
-        # Pair teacher layers with student stages by index
-        # Teacher layers are sorted by name so model.4 → stage1, model.6 → stage2, etc.
-        teacher_layers = [
-            (name, shape) for name, shape in teacher_feature_shapes.items()
-            if isinstance(shape, tuple) and len(shape) == 4
-        ]
-
-        for i, (teacher_layer, shape) in enumerate(teacher_layers):
-            if i >= len(student_stages):
-                break
-            student_layer, s_channels = student_stages[i]
-            teacher_channels = shape[1]
-            adapter_name = f"{student_layer}_to_{teacher_layer.replace('.', '_')}"
-            adapters[adapter_name] = FeatureMatchingLayer(
-                s_channels,
-                teacher_channels,
-                use_bn=True
-            )
-
-        return adapters
-
-    def _build_detection_head(self) -> nn.Module:
-        """
-        Build detection head for object detection.
-        Simplified version - full YOLO head is more complex.
-        """
-        # Number of outputs per anchor: (x, y, w, h, objectness, class_probs)
-        num_outputs = 5 + self.num_classes
-
-        return nn.Sequential(
-            nn.Conv2d(512, 256, kernel_size=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.SiLU(inplace=True),
-            nn.Conv2d(256, num_outputs, kernel_size=1),
-        )
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        return_features: bool = False
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass with optional feature extraction.
-
-        Args:
-            x: Input tensor [B, C, H, W]
-            return_features: Whether to return intermediate features
-
-        Returns:
-            Dictionary containing:
-                - predictions: Detection predictions
-                - features: Intermediate features (if return_features=True)
-                - adapted_features: Adapted features matching teacher dims (if adapters exist)
-        """
-        features = {}
-        adapted_features = {}
-
-        # Forward through backbone
-        x = self.backbone['stem'](x)
-
-        for stage_name in ['stage1', 'stage2', 'stage3', 'stage4']:
-            x = self.backbone[stage_name](x)
-
-            # Store intermediate features
-            if return_features and stage_name in self.feature_layers:
-                features[stage_name] = x
-
-                # Apply feature adapters if available
-                if self.feature_adapters:
-                    for adapter_name, adapter in self.feature_adapters.items():
-                        if adapter_name.startswith(stage_name):
-                            adapted_features[adapter_name] = adapter(x)
-
-        # Detection head
-        predictions = self.detection_head(x)
-
-        result = {'predictions': predictions}
-
-        if return_features:
-            result['features'] = features
-            if adapted_features:
-                result['adapted_features'] = adapted_features
-
-        return result
+    def forward(self, x):
+        return self.relu(self.block(x) + x)
 
 
-def create_student_from_teacher(
-    teacher_feature_extractor,
-    num_classes: int = 1,
-) -> StudentYOLO:
-    """
-    Create a student model matched to a teacher's feature dimensions.
+class StudentSegmentation(nn.Module):
+    """U-Net segmentation student with CBAM attention and distillation hooks.
 
     Args:
-        teacher_feature_extractor: YOLOFeatureExtractor instance
-        num_classes: Number of object classes
+        in_channels: Input channels (3 for RGB)
+        base_channels: Base channel count (doubled each encoder level)
+        depth: Number of encoder/decoder levels
+        teacher_channels: Channel counts of teacher features at each scale.
+                         E.g. [128, 128, 256] for YOLO26n at layers 4, 6, 10.
 
-    Returns:
-        Student model instance
+    Forward returns:
+        output: [B, 1, H, W] segmentation mask (sigmoid)
+        distill_info: dict with "features", "attention_maps", "projected"
     """
-    # Get teacher feature shapes
-    teacher_shapes = teacher_feature_extractor.get_feature_shapes()
 
-    print(f"Creating student model to match teacher with {len(teacher_shapes)} feature layers")
+    def __init__(self, in_channels=3, base_channels=32, depth=4,
+                 teacher_channels: Optional[List[int]] = None):
+        super().__init__()
 
-    student = StudentYOLO(
-        num_classes=num_classes,
-        teacher_feature_shapes=teacher_shapes,
-        use_feature_adapters=True
-    )
-    print("Created StudentYOLO with feature adapters")
+        if teacher_channels is None:
+            teacher_channels = [128, 128, 256]
 
-    # Print model info
-    total_params = sum(p.numel() for p in student.parameters())
-    trainable_params = sum(p.numel() for p in student.parameters() if p.requires_grad)
+        self.depth = depth
+        self.teacher_channels = teacher_channels
 
-    print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
+        # Encoder channels: [64, 128, 256, 512] for base=32, depth=4
+        self._enc_channels = [base_channels * (2 ** i) for i in range(1, depth + 1)]
 
-    return student
+        # Initial conv (no downsampling)
+        self.initial = nn.Sequential(
+            nn.Conv2d(in_channels, base_channels, 7, padding=3, bias=False),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(inplace=True),
+        )
 
+        # Encoder
+        self.encoders = nn.ModuleList()
+        self.cbams = nn.ModuleList()
+        enc_in = base_channels
+        for i in range(depth):
+            enc_out = self._enc_channels[i]
+            self.encoders.append(DownBlock(enc_in, enc_out))
+            self.cbams.append(CBAM(enc_out))
+            enc_in = enc_out
 
-if __name__ == "__main__":
-    # Test student model creation
-    print("Testing student model architectures...\n")
+        # Bottleneck
+        bottleneck_ch = self._enc_channels[-1]
+        self.bottleneck = nn.Sequential(
+            ResBlock(bottleneck_ch, dilation=1),
+            ResBlock(bottleneck_ch, dilation=2),
+            ResBlock(bottleneck_ch, dilation=1),
+        )
 
-    # Test standard student
-    print("="*60)
-    print("Standard Student Model")
-    print("="*60)
+        # Decoder
+        self.decoders = nn.ModuleList()
+        dec_in_ch = bottleneck_ch
+        for i in range(depth):
+            skip_idx = depth - 1 - i
+            skip_ch = self._enc_channels[skip_idx - 1] if skip_idx > 0 else base_channels
+            dec_out = skip_ch
+            self.decoders.append(UpBlock(dec_in_ch + skip_ch, dec_out))
+            dec_in_ch = dec_out
 
-    # Mock teacher feature shapes (typical YOLO shapes)
-    mock_teacher_shapes = {
-        'model.4': (1, 128, 80, 80),
-        'model.6': (1, 256, 40, 40),
-        'model.9': (1, 512, 20, 20),
-    }
+        # Output head
+        self.output_head = nn.Sequential(
+            nn.Conv2d(base_channels, base_channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(base_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, 1, 1),
+            nn.Sigmoid(),
+        )
 
-    student = StudentYOLO(
-        num_classes=1,
-        teacher_feature_shapes=mock_teacher_shapes,
-        use_feature_adapters=True
-    )
+        # Distillation projections
+        n_align = len(teacher_channels)
+        assert n_align <= depth
+        aligned_start = depth - n_align
+        self.projections = nn.ModuleList([
+            AttentionProjection(self._enc_channels[aligned_start + i], teacher_channels[i])
+            for i in range(n_align)
+        ])
+        self._aligned_start = aligned_start
 
-    # Test forward pass
-    dummy_input = torch.randn(2, 3, 640, 640)
-    output = student(dummy_input, return_features=True)
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, dict]:
+        x = self.initial(x)
 
-    print(f"\nInput shape: {dummy_input.shape}")
-    print(f"Predictions shape: {output['predictions'].shape}")
-    print(f"Number of feature maps: {len(output['features'])}")
-    for name, feat in output['features'].items():
-        print(f"  {name}: {feat.shape}")
+        # Encoder
+        skips = []
+        enc_features = []
+        attn_maps = []
+        for i in range(self.depth):
+            skips.append(x)
+            x = self.encoders[i](x)
+            sp_map, x = self.cbams[i](x)
+            enc_features.append(x)
+            attn_maps.append(sp_map)
 
-    if 'adapted_features' in output:
-        print(f"Number of adapted features: {len(output['adapted_features'])}")
-        for name, feat in output['adapted_features'].items():
-            print(f"  {name}: {feat.shape}")
+        # Bottleneck
+        x = self.bottleneck(x)
 
-    # Count parameters
-    total_params = sum(p.numel() for p in student.parameters())
-    print(f"\nTotal parameters: {total_params:,}")
+        # Decoder
+        for i in range(self.depth):
+            skip_idx = self.depth - 1 - i
+            x = self.decoders[i](x, skips[skip_idx])
 
-    print(f"\nTotal parameters: {total_params:,}")
+        output = self.output_head(x)
+
+        # Distillation info from aligned encoder levels
+        n = len(self.teacher_channels)
+        s = self._aligned_start
+        distill_info = {
+            "features": [enc_features[s + i] for i in range(n)],
+            "attention_maps": [attn_maps[s + i] for i in range(n)],
+            "projected": [self.projections[i](enc_features[s + i]) for i in range(n)],
+        }
+
+        return output, distill_info
