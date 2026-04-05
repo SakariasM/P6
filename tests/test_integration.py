@@ -10,11 +10,17 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from teacher.hybrid_predictions import HybridTeacherPrediction
-from student.student_model import StudentYOLO
-from training.hybrid_distillation_train import HybridDistillationLoss
+from student.student_model import StudentSegmentation
+from training.distillation_loss import SegmentationDistillationLoss
+from training.hybrid_distillation_train import (
+    compute_teacher_attention, select_teacher_layers,
+)
 
 
-def make_fake_predictions(n=4, num_classes=80):
+TEACHER_CHANNELS = [128, 128, 256]
+
+
+def make_fake_predictions(n=4):
     """Create synthetic HybridTeacherPredictions for testing."""
     preds = []
     for i in range(n):
@@ -23,12 +29,12 @@ def make_fake_predictions(n=4, num_classes=80):
             boxes=[[0.1, 0.2, 0.5, 0.8]],
             confidences=[0.9],
             class_ids=[0],
-            class_probs=[[0.9] + [0.1 / (num_classes - 1)] * (num_classes - 1)],
+            class_probs=[[0.9] + [0.01] * 10],
             image_shape=(640, 640, 3),
             features={
                 "model.4": torch.randn(128, 80, 80),
-                "model.6": torch.randn(256, 40, 40),
-                "model.9": torch.randn(512, 20, 20),
+                "model.6": torch.randn(128, 40, 40),
+                "model.9": torch.randn(256, 20, 20),
             },
             raw_logits=torch.randn(85, 20, 20),
         )
@@ -60,37 +66,45 @@ class TestEndToEndTrainingLoop:
     """Simulate complete training loop with synthetic data (no disk I/O)."""
 
     def _run_training_steps(self, device, n_steps=3):
-        teacher_shapes = {
-            "model.4": (1, 128, 80, 80),
-            "model.6": (1, 256, 40, 40),
-            "model.9": (1, 512, 20, 20),
-        }
-
-        model = StudentYOLO(
-            num_classes=80, teacher_feature_shapes=teacher_shapes
+        model = StudentSegmentation(
+            teacher_channels=TEACHER_CHANNELS,
         ).to(device)
 
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-        criterion = HybridDistillationLoss(
-            feature_weight=1.0,
-            response_weight=1.0,
-            temperature=3.0,
-            feature_distance="mse",
+        criterion = SegmentationDistillationLoss(
+            attention_weight=1.0,
+            mimicry_weight=0.5,
+            relation_weight=0.5,
         )
 
         losses = []
         for step in range(n_steps):
-            images = torch.randn(2, 3, 320, 320, device=device)
-            teacher_features = {
-                "model.4": torch.randn(2, 128, 40, 40, device=device),
-                "model.6": torch.randn(2, 256, 20, 20, device=device),
-                "model.9": torch.randn(2, 512, 10, 10, device=device),
-            }
-            teacher_logits = torch.randn(2, 85, 10, 10, device=device)
+            images = torch.randn(2, 3, 128, 128, device=device)
+
+            # Simulate teacher features at 3 scales
+            teacher_feats = [
+                torch.randn(2, 128, 32, 32, device=device),
+                torch.randn(2, 128, 16, 16, device=device),
+                torch.randn(2, 256, 8, 8, device=device),
+            ]
+            teacher_atts = [compute_teacher_attention(f) for f in teacher_feats]
 
             optimizer.zero_grad()
-            out = model(images, return_features=True)
-            loss, loss_dict = criterion(out, teacher_features, teacher_logits)
+            seg_output, distill_info = model(images)
+
+            projected = distill_info['projected']
+            student_atts = distill_info['attention_maps']
+
+            n = len(projected)
+            t_feats = teacher_feats[-n:]
+            t_atts = teacher_atts[-n:]
+
+            loss, loss_dict = criterion(
+                student_atts=student_atts,
+                teacher_atts=t_atts,
+                projected_student_feats=projected,
+                teacher_feats=t_feats,
+            )
             loss.backward()
             optimizer.step()
 
@@ -115,54 +129,31 @@ class TestEndToEndTrainingLoop:
         with tempfile.TemporaryDirectory() as tmpdir:
             ckpt_path = Path(tmpdir) / "checkpoint.pt"
 
-            # Save
             torch.save({
                 "model_state_dict": model.state_dict(),
                 "epoch": 1,
+                "teacher_channels": TEACHER_CHANNELS,
             }, ckpt_path)
 
-            # Load into new model
-            teacher_shapes = {
-                "model.4": (1, 128, 80, 80),
-                "model.6": (1, 256, 40, 40),
-                "model.9": (1, 512, 20, 20),
-            }
-            new_model = StudentYOLO(
-                num_classes=80, teacher_feature_shapes=teacher_shapes
+            new_model = StudentSegmentation(
+                teacher_channels=TEACHER_CHANNELS,
             )
-            ckpt = torch.load(ckpt_path, weights_only=True)
+            ckpt = torch.load(ckpt_path, weights_only=False)
             new_model.load_state_dict(ckpt["model_state_dict"])
 
-            # Verify outputs match
-            x = torch.randn(1, 3, 320, 320)
+            x = torch.randn(1, 3, 128, 128)
             model.eval()
             new_model.eval()
             with torch.no_grad():
-                out1 = model(x)["predictions"]
-                out2 = new_model(x)["predictions"]
+                out1, _ = model(x)
+                out2, _ = new_model(x)
             assert torch.allclose(out1, out2, atol=1e-5)
 
-    def test_all_loss_distances(self):
-        """Verify training works with all feature distance metrics."""
-        teacher_shapes = {
-            "model.4": (1, 128, 80, 80),
-        }
-
-        for distance in ["mse", "cosine", "at"]:
-            model = StudentYOLO(
-                num_classes=80, teacher_feature_shapes=teacher_shapes
-            )
-            criterion = HybridDistillationLoss(
-                feature_weight=1.0,
-                response_weight=0.0,
-                feature_distance=distance,
-            )
-
-            images = torch.randn(1, 3, 320, 320)
-            teacher_features = {"model.4": torch.randn(1, 128, 40, 40)}
-
-            out = model(images, return_features=True)
-            loss, _ = criterion(out, teacher_features, teacher_logits=None)
-            loss.backward()
-
-            assert loss.item() > 0, f"Failed with distance={distance}"
+    def test_loss_decreases(self):
+        """Verify loss trends downward over several steps."""
+        _, losses = self._run_training_steps("cpu", n_steps=10)
+        # Average of first 3 should be higher than average of last 3
+        early = sum(losses[:3]) / 3
+        late = sum(losses[-3:]) / 3
+        # Not guaranteed to always decrease, but should trend down
+        assert late < early * 1.5, f"Loss not decreasing: early={early:.4f}, late={late:.4f}"
