@@ -2,7 +2,7 @@
 #SBATCH --job-name=kd-train
 #SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/train_%j.out
 #SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/train_%j.err
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
