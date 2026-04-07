@@ -33,6 +33,8 @@ MIM_W="${MIMICRY_WEIGHT:-0.5}"
 REL_W="${RELATION_WEIGHT:-0.5}"
 BASE_CH="${BASE_CHANNELS:-8}"
 DEPTH="${DEPTH:-4}"
+IMG_SIZE="${IMG_SIZE:-640}"
+WORKERS="${NUM_WORKERS:-8}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
 
 echo "=== Segmentation Distillation Training ==="
@@ -42,7 +44,7 @@ echo "Epochs: ${EPOCHS}"
 echo "Batch size: ${BATCH}"
 echo "LR: ${LR}"
 echo "Loss weights: att=${ATT_W}, mim=${MIM_W}, rel=${REL_W}"
-echo "Student: base_ch=${BASE_CH}, depth=${DEPTH}"
+echo "Student: base_ch=${BASE_CH}, depth=${DEPTH}, img=${IMG_SIZE}"
 echo ""
 
 mkdir -p "${OUT_DIR}"
@@ -84,6 +86,8 @@ singularity exec --nv \
             --relation-weight ${REL_W} \
             --base-channels ${BASE_CH} \
             --depth ${DEPTH} \
+            --img-size ${IMG_SIZE} \
+            --num-workers ${WORKERS} \
             --output-dir '${OUT_DIR}' \
             --save-interval 10 \
             \${RESUME_ARG}
