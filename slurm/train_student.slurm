@@ -35,7 +35,7 @@ BASE_CH="${BASE_CHANNELS:-8}"
 DEPTH="${DEPTH:-4}"
 IMG_SIZE="${IMG_SIZE:-640}"
 WORKERS="${NUM_WORKERS:-8}"
-SAVE_INT="${SAVE_INTERVAL:-2}"
+SAVE_INT="${SAVE_INTERVAL:-1}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
 
 echo "=== Segmentation Distillation Training ==="
