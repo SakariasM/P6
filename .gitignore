@@ -31,6 +31,7 @@ logs/
 *.swo
 .claude/
 CLAUDE.md
+docs/
 # OS
 .DS_Store
 
@@ -39,4 +40,3 @@ CLAUDE.md
 
 # TensorBoard runs (keep folder, ignore contents)
 runs/**
-
