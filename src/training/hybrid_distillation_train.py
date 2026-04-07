@@ -327,6 +327,9 @@ def main(args):
 
         history.append({'epoch': epoch, **metrics, 'lr': optimizer.param_groups[0]['lr']})
 
+        with open(output_dir / 'training_history.json', 'w') as f:
+            json.dump(history, f, indent=2)
+
         raw_state = (model.module.state_dict()
                      if isinstance(model, torch.nn.DataParallel)
                      else model.state_dict())
