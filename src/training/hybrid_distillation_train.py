@@ -270,7 +270,7 @@ def main(args):
 
             for batch in progress_bar:
                 images = batch['image'].to(device)
-                teacher_feats = [f.to(device) for f in batch['teacher_features']]
+                teacher_feats = [f.to(device, dtype=torch.float32) for f in batch['teacher_features']]
 
                 # Compute teacher attention from pre-extracted features
                 teacher_atts = [compute_teacher_attention(f) for f in teacher_feats]
