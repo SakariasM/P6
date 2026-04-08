@@ -10,8 +10,6 @@ class ChannelAttention(nn.Module):
     def __init__(self, channels, reduction=16):
         super().__init__()
         mid = max(channels // reduction, 8)
-        self.avg = nn.AdaptiveAvgPool2d(1)
-        self.mx = nn.AdaptiveMaxPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channels, mid, bias=False),
             nn.ReLU(inplace=True),
@@ -21,8 +19,8 @@ class ChannelAttention(nn.Module):
 
     def forward(self, x):
         b, c = x.shape[:2]
-        a = self.fc(self.avg(x).view(b, c))
-        m = self.fc(self.mx(x).view(b, c))
+        a = self.fc(x.mean(dim=(2, 3)))
+        m = self.fc(x.amax(dim=(2, 3)))
         gate = self.sig(a + m).view(b, c, 1, 1)
         return gate, x * gate
 
