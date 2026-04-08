@@ -64,10 +64,14 @@ singularity exec --nv \
 
         nvidia-smi
 
-        # Resume from latest training checkpoint if one exists
+        # Resume from latest checkpoint (prefer mid-epoch over epoch-end)
         RESUME_ARG=''
+        MID_CKPT='${OUT_DIR}/checkpoint_mid_epoch.pt'
         LATEST_CKPT=\$(find '${OUT_DIR}' -name 'checkpoint_epoch_*.pt' 2>/dev/null | sort -V | tail -1)
-        if [ -n \"\${LATEST_CKPT}\" ]; then
+        if [ -f \"\${MID_CKPT}\" ]; then
+            echo \"Resuming from mid-epoch checkpoint\"
+            RESUME_ARG=\"--resume \${MID_CKPT}\"
+        elif [ -n \"\${LATEST_CKPT}\" ]; then
             echo \"Resuming from: \${LATEST_CKPT}\"
             RESUME_ARG=\"--resume \${LATEST_CKPT}\"
         fi

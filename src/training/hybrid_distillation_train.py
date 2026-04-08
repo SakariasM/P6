@@ -210,6 +210,9 @@ def main(args):
     best_loss = float('inf')
     history = []
 
+    resume_chunk_idx = 0
+    resume_epoch_losses = None
+
     if args.resume and Path(args.resume).exists():
         print(f"Resuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
@@ -223,7 +226,17 @@ def main(args):
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_loss = checkpoint.get('loss', float('inf'))
-        print(f"Resumed from epoch {checkpoint['epoch']}, best loss: {best_loss:.4f}\n")
+        if 'history' in checkpoint:
+            history = checkpoint['history']
+
+        # Mid-epoch resume: checkpoint saved partway through an epoch
+        if checkpoint.get('chunk_idx') is not None:
+            start_epoch = checkpoint['epoch']  # resume same epoch
+            resume_chunk_idx = checkpoint['chunk_idx'] + 1
+            resume_epoch_losses = checkpoint.get('epoch_losses')
+            print(f"Resumed mid-epoch {checkpoint['epoch']} at chunk {resume_chunk_idx}/{len(chunk_files)}, best loss: {best_loss:.4f}\n")
+        else:
+            print(f"Resumed from epoch {checkpoint['epoch']}, best loss: {best_loss:.4f}\n")
     elif args.resume:
         print(f"Warning: --resume path '{args.resume}' not found, starting from scratch.\n")
 
@@ -234,16 +247,32 @@ def main(args):
     print(f"Starting training from epoch {start_epoch} to {args.epochs}...")
     print(f"Training on {len(chunk_files)} chunks (one at a time)\n")
 
+    mid_epoch_interval = 50  # save mid-epoch checkpoint every N chunks
+
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
 
+        # Seeded shuffle so chunk order is reproducible on resume
+        rng = random.Random(epoch)
         shuffled_chunks = chunk_files.copy()
-        random.shuffle(shuffled_chunks)
+        rng.shuffle(shuffled_chunks)
 
         epoch_losses = {"attention": 0.0, "mimicry": 0.0, "relation": 0.0, "total": 0.0}
         epoch_batches = 0
 
+        # Restore accumulated losses when resuming mid-epoch
+        start_chunk = 0
+        if resume_chunk_idx > 0 and epoch == start_epoch:
+            start_chunk = resume_chunk_idx
+            if resume_epoch_losses:
+                epoch_losses = resume_epoch_losses
+                epoch_batches = resume_epoch_losses.get('_batches', 0)
+            print(f"Skipping to chunk {start_chunk}/{len(shuffled_chunks)}")
+
         for chunk_idx, chunk_file in enumerate(shuffled_chunks):
+            if chunk_idx < start_chunk:
+                continue
+
             preds = torch.load(chunk_file, weights_only=False)
             preds = [p for p in preds if p.features]
 
@@ -315,6 +344,31 @@ def main(args):
             del preds, chunk_dataset, chunk_loader
             torch.cuda.empty_cache()
 
+            # Mid-epoch checkpoint
+            if (chunk_idx + 1) % mid_epoch_interval == 0:
+                raw_state = (model.module.state_dict()
+                             if isinstance(model, torch.nn.DataParallel)
+                             else model.state_dict())
+                save_losses = {**epoch_losses, '_batches': epoch_batches}
+                torch.save({
+                    'epoch': epoch,
+                    'chunk_idx': chunk_idx,
+                    'model_state_dict': raw_state,
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'loss': best_loss,
+                    'epoch_losses': save_losses,
+                    'history': history,
+                    'teacher_channels': teacher_channels,
+                    'teacher_layer_names': teacher_layer_names,
+                    'args': vars(args),
+                }, output_dir / 'checkpoint_mid_epoch.pt')
+                print(f"  [mid-epoch checkpoint saved at chunk {chunk_idx+1}]")
+
+        # Reset mid-epoch resume state after first epoch completes
+        resume_chunk_idx = 0
+        resume_epoch_losses = None
+
         scheduler.step()
 
         # Epoch metrics
@@ -358,6 +412,11 @@ def main(args):
                 'teacher_layer_names': teacher_layer_names,
                 'args': vars(args),
             }, output_dir / f'checkpoint_epoch_{epoch}.pt')
+
+        # Remove mid-epoch checkpoint once the full epoch is saved
+        mid_ckpt = output_dir / 'checkpoint_mid_epoch.pt'
+        if mid_ckpt.exists():
+            mid_ckpt.unlink()
 
     # Save final model
     raw_state = (model.module.state_dict()
