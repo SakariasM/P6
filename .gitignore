@@ -22,7 +22,6 @@ data/
 checkpoints/
 logs/
 *.pth
-*.pt
 
 # IDE
 .vscode/
