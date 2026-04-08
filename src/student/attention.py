@@ -20,7 +20,7 @@ class ChannelAttention(nn.Module):
     def forward(self, x):
         b, c = x.shape[:2]
         a = self.fc(x.mean(dim=(2, 3)))
-        m = self.fc(x.amax(dim=(2, 3)))
+        m = self.fc(x.flatten(2).max(dim=2).values)
         gate = self.sig(a + m).view(b, c, 1, 1)
         return gate, x * gate
 
