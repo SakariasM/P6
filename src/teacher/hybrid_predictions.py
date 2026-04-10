@@ -3,6 +3,7 @@ Enhanced prediction capture for hybrid distillation.
 Captures both response-based (logits) and feature-based (intermediate features) knowledge.
 """
 import json
+import cv2
 import torch
 import numpy as np
 from pathlib import Path
@@ -35,6 +36,8 @@ class HybridTeacherPrediction:
 
     # Optional segmentation data
     masks: Optional[List[List[List[int]]]] = None
+    # Binary person mask [H, W] float32 (merged from all instance masks)
+    segmentation_mask: Optional[torch.Tensor] = None
 
     def to_dict_without_features(self) -> Dict:
         """Convert to dictionary without heavy feature tensors (for JSON)."""
@@ -60,7 +63,7 @@ class HybridYOLOInference:
 
     def __init__(
         self,
-        model_name: str = "yolo26n.pt",
+        model_name: str = "yolo26n-seg.pt",
         device: Optional[str] = None,
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
@@ -282,12 +285,22 @@ class HybridYOLOInference:
             raw_logits = batch_logits.get(batch_idx, None)
 
             masks_data = None
+            seg_mask = None
             if hasattr(result, 'masks') and result.masks is not None:
                 masks_xy = result.masks.xy
                 masks_data = []
                 for i in filtered_indices:
                     if i < len(masks_xy):
                         masks_data.append(masks_xy[i].tolist())
+
+                # Build merged binary person mask from instance polygons
+                binary_mask = np.zeros((h, w), dtype=np.uint8)
+                for i in filtered_indices:
+                    if i < len(masks_xy):
+                        pts = masks_xy[i].astype(np.int32)
+                        if len(pts) >= 3:
+                            cv2.fillPoly(binary_mask, [pts], 1)
+                seg_mask = torch.from_numpy(binary_mask).to(torch.uint8)
 
             prediction = HybridTeacherPrediction(
                 image_path=str(image_path),
@@ -298,7 +311,8 @@ class HybridYOLOInference:
                 image_shape=(int(h), int(w), 3),
                 features=features,
                 raw_logits=raw_logits,
-                masks=masks_data
+                masks=masks_data,
+                segmentation_mask=seg_mask,
             )
             predictions.append(prediction)
 

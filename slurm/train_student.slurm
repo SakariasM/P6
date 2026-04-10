@@ -31,6 +31,7 @@ LR="${LEARNING_RATE:-1e-4}"
 ATT_W="${ATTENTION_WEIGHT:-1.0}"
 MIM_W="${MIMICRY_WEIGHT:-0.5}"
 REL_W="${RELATION_WEIGHT:-0.5}"
+SEG_W="${SEG_WEIGHT:-1.0}"
 BASE_CH="${BASE_CHANNELS:-8}"
 DEPTH="${DEPTH:-4}"
 IMG_SIZE="${IMG_SIZE:-640}"
@@ -44,7 +45,7 @@ echo "Job ID: ${SLURM_JOB_ID}"
 echo "Epochs: ${EPOCHS}"
 echo "Batch size: ${BATCH}"
 echo "LR: ${LR}"
-echo "Loss weights: att=${ATT_W}, mim=${MIM_W}, rel=${REL_W}"
+echo "Loss weights: att=${ATT_W}, mim=${MIM_W}, rel=${REL_W}, seg=${SEG_W}"
 echo "Student: base_ch=${BASE_CH}, depth=${DEPTH}, img=${IMG_SIZE}"
 echo ""
 
@@ -89,12 +90,14 @@ singularity exec --nv \
             --attention-weight ${ATT_W} \
             --mimicry-weight ${MIM_W} \
             --relation-weight ${REL_W} \
+            --seg-weight ${SEG_W} \
             --base-channels ${BASE_CH} \
             --depth ${DEPTH} \
             --img-size ${IMG_SIZE} \
             --num-workers ${WORKERS} \
             --output-dir '${OUT_DIR}' \
             --save-interval ${SAVE_INT} \
+            --augment \
             \${RESUME_ARG}
 
         echo ''

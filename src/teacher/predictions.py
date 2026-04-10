@@ -37,7 +37,7 @@ class YOLOTeacherInference:
 
     def __init__(
         self,
-        model_name: str = "yolo26n.pt",
+        model_name: str = "yolo26n-seg.pt",
         device: Optional[str] = None,
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,

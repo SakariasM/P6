@@ -80,15 +80,21 @@ class ChunkDataset(Dataset):
     def __init__(self, predictions: List[HybridTeacherPrediction],
                  teacher_layer_names: List[str],
                  image_root: Optional[str] = None,
-                 target_size: Tuple[int, int] = (640, 640)):
+                 target_size: Tuple[int, int] = (640, 640),
+                 augment: bool = False):
         self.predictions = predictions
         self.teacher_layer_names = teacher_layer_names
         self.image_root = Path(image_root) if image_root else None
         self.target_size = target_size
-        self.transform = transforms.Compose([
+        self.augment = augment
+        self.base_transform = transforms.Compose([
             transforms.Resize(target_size),
             transforms.ToTensor(),
         ])
+        # Color augmentations only affect the image, not teacher features
+        self.color_augment = transforms.ColorJitter(
+            brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05
+        )
 
     def __len__(self):
         return len(self.predictions)
@@ -99,7 +105,14 @@ class ChunkDataset(Dataset):
         image_path = Path(pred.image_path)
         if self.image_root and not image_path.is_absolute():
             image_path = self.image_root / image_path
-        image = self.transform(Image.open(image_path).convert('RGB'))
+        pil_image = Image.open(image_path).convert('RGB')
+
+        # Color augmentation before toTensor (student sees varied colors,
+        # but must still match the same teacher features)
+        if self.augment:
+            pil_image = self.color_augment(pil_image)
+
+        image = self.base_transform(pil_image)
 
         teacher_feats = []
         for name in self.teacher_layer_names:
@@ -108,10 +121,29 @@ class ChunkDataset(Dataset):
             else:
                 raise KeyError(f"Layer {name} not in prediction. Available: {list(pred.features.keys())}")
 
-        return {
+        # Teacher segmentation mask (if available)
+        teacher_mask = None
+        if pred.segmentation_mask is not None:
+            teacher_mask = pred.segmentation_mask.float().unsqueeze(0)  # [1, H, W]
+            # Resize to match target_size
+            teacher_mask = F.interpolate(
+                teacher_mask.unsqueeze(0), size=self.target_size, mode='bilinear', align_corners=False
+            ).squeeze(0)  # [1, H, W]
+
+        # Random horizontal flip — applied to image, teacher features, and mask
+        if self.augment and random.random() > 0.5:
+            image = torch.flip(image, dims=[-1])
+            teacher_feats = [torch.flip(f, dims=[-1]) for f in teacher_feats]
+            if teacher_mask is not None:
+                teacher_mask = torch.flip(teacher_mask, dims=[-1])
+
+        result = {
             'image': image,
             'teacher_features': teacher_feats,
         }
+        if teacher_mask is not None:
+            result['teacher_mask'] = teacher_mask
+        return result
 
 
 def collate_fn(batch):
@@ -121,10 +153,13 @@ def collate_fn(batch):
     teacher_feats = []
     for s in range(num_scales):
         teacher_feats.append(torch.stack([b['teacher_features'][s] for b in batch]))
-    return {
+    result = {
         'image': images,
         'teacher_features': teacher_feats,
     }
+    if 'teacher_mask' in batch[0]:
+        result['teacher_mask'] = torch.stack([b['teacher_mask'] for b in batch])
+    return result
 
 
 def discover_chunk_files(predictions_path: str) -> List[Path]:
@@ -193,6 +228,7 @@ def main(args):
         attention_weight=args.attention_weight,
         mimicry_weight=args.mimicry_weight,
         relation_weight=args.relation_weight,
+        seg_weight=args.seg_weight,
     )
 
     # Optimizer
@@ -257,7 +293,7 @@ def main(args):
         shuffled_chunks = chunk_files.copy()
         rng.shuffle(shuffled_chunks)
 
-        epoch_losses = {"attention": 0.0, "mimicry": 0.0, "relation": 0.0, "total": 0.0}
+        epoch_losses = {"attention": 0.0, "mimicry": 0.0, "relation": 0.0, "total": 0.0, "segmentation": 0.0}
         epoch_batches = 0
 
         # Restore accumulated losses when resuming mid-epoch
@@ -284,6 +320,7 @@ def main(args):
                 preds, teacher_layer_names,
                 image_root=args.image_root,
                 target_size=(args.img_size, args.img_size),
+                augment=args.augment,
             )
             chunk_loader = DataLoader(
                 chunk_dataset,
@@ -317,11 +354,16 @@ def main(args):
                 t_atts = teacher_atts[-n:]
 
                 # Loss
+                teacher_mask = batch.get('teacher_mask')
+                if teacher_mask is not None:
+                    teacher_mask = teacher_mask.to(device, dtype=torch.float32)
                 loss, loss_dict = criterion(
                     student_atts=student_atts,
                     teacher_atts=t_atts,
                     projected_student_feats=projected,
                     teacher_feats=t_feats,
+                    student_mask=seg_output,
+                    teacher_mask=teacher_mask,
                 )
 
                 loss.backward()
@@ -335,11 +377,14 @@ def main(args):
                     epoch_losses[k] += loss_dict.get(k, 0.0)
                 epoch_batches += 1
 
-                progress_bar.set_postfix({
+                postfix = {
                     'loss': f"{loss_dict['total']:.4f}",
                     'att': f"{loss_dict['attention']:.4f}",
                     'mim': f"{loss_dict['mimicry']:.4f}",
-                })
+                }
+                if 'segmentation' in loss_dict:
+                    postfix['seg'] = f"{loss_dict['segmentation']:.4f}"
+                progress_bar.set_postfix(postfix)
 
             del preds, chunk_dataset, chunk_loader
             torch.cuda.empty_cache()
@@ -375,8 +420,9 @@ def main(args):
         metrics = {k: v / max(epoch_batches, 1) for k, v in epoch_losses.items()}
 
         print(f"\nEpoch {epoch}/{args.epochs}")
+        seg_str = f"  Seg: {metrics['segmentation']:.4f}" if metrics.get('segmentation', 0) > 0 else ""
         print(f"  Total: {metrics['total']:.4f}  Att: {metrics['attention']:.4f}"
-              f"  Mim: {metrics['mimicry']:.4f}  Rel: {metrics['relation']:.4f}")
+              f"  Mim: {metrics['mimicry']:.4f}  Rel: {metrics['relation']:.4f}{seg_str}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}  Batches: {epoch_batches}")
 
         history.append({'epoch': epoch, **metrics, 'lr': optimizer.param_groups[0]['lr']})
@@ -395,6 +441,7 @@ def main(args):
                 'model_state_dict': raw_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_loss,
+                'history': history,
                 'teacher_channels': teacher_channels,
                 'teacher_layer_names': teacher_layer_names,
                 'args': vars(args),
@@ -408,6 +455,7 @@ def main(args):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
                 'loss': metrics['total'],
+                'history': history,
                 'teacher_channels': teacher_channels,
                 'teacher_layer_names': teacher_layer_names,
                 'args': vars(args),
@@ -467,6 +515,10 @@ if __name__ == "__main__":
     parser.add_argument("--attention-weight", type=float, default=1.0)
     parser.add_argument("--mimicry-weight", type=float, default=0.5)
     parser.add_argument("--relation-weight", type=float, default=0.5)
+    parser.add_argument("--seg-weight", type=float, default=0.0,
+                        help="Segmentation loss weight (BCE+Dice vs teacher mask). 0 = disabled.")
+    parser.add_argument("--augment", action="store_true",
+                        help="Enable data augmentation (color jitter + random flip)")
 
     # Output
     parser.add_argument("--output-dir", type=str, default="./trained_models")

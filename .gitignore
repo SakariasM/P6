@@ -31,6 +31,9 @@ logs/
 .claude/
 CLAUDE.md
 docs/
+# Documentation (personal reference, not tracked)
+PROJECT_DOCUMENTATION.txt
+
 # OS
 .DS_Store
 
