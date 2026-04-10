@@ -50,17 +50,41 @@ class RelationDistillationLoss(nn.Module):
         return torch.stack(losses).mean()
 
 
+class SegmentationLoss(nn.Module):
+    """BCE + Dice loss comparing student mask against teacher pseudo ground truth."""
+
+    def forward(self, student_mask: torch.Tensor, teacher_mask: torch.Tensor) -> torch.Tensor:
+        # student_mask: [B, 1, H, W] sigmoid output
+        # teacher_mask: [B, 1, H, W] binary {0, 1}
+        if student_mask.shape[2:] != teacher_mask.shape[2:]:
+            teacher_mask = F.interpolate(teacher_mask, size=student_mask.shape[2:],
+                                         mode='bilinear', align_corners=False)
+        bce = F.binary_cross_entropy(student_mask, teacher_mask.float())
+        # Dice loss
+        smooth = 1.0
+        s_flat = student_mask.view(-1)
+        t_flat = teacher_mask.float().view(-1)
+        intersection = (s_flat * t_flat).sum()
+        dice = 1 - (2. * intersection + smooth) / (s_flat.sum() + t_flat.sum() + smooth)
+        return bce + dice
+
+
 class SegmentationDistillationLoss(nn.Module):
-    def __init__(self, attention_weight=1.0, mimicry_weight=0.5, relation_weight=0.5):
+    def __init__(self, attention_weight=1.0, mimicry_weight=0.5, relation_weight=0.5,
+                 seg_weight=0.0):
         super().__init__()
         self.att_w = attention_weight
         self.mim_w = mimicry_weight
         self.rel_w = relation_weight
+        self.seg_w = seg_weight
         self.att_loss = AttentionTransferLoss()
         self.mim_loss = FeatureMimicryLoss()
         self.rel_loss = RelationDistillationLoss()
+        if seg_weight > 0:
+            self.seg_loss = SegmentationLoss()
 
-    def forward(self, student_atts, teacher_atts, projected_student_feats, teacher_feats):
+    def forward(self, student_atts, teacher_atts, projected_student_feats, teacher_feats,
+                student_mask=None, teacher_mask=None):
         losses = {}
         att = self.att_loss(student_atts, teacher_atts)
         losses["attention"] = att.item()
@@ -69,5 +93,11 @@ class SegmentationDistillationLoss(nn.Module):
         rel = self.rel_loss(projected_student_feats, teacher_feats)
         losses["relation"] = rel.item()
         total = self.att_w * att + self.mim_w * mim + self.rel_w * rel
+
+        if self.seg_w > 0 and student_mask is not None and teacher_mask is not None:
+            seg = self.seg_loss(student_mask, teacher_mask)
+            losses["segmentation"] = seg.item()
+            total = total + self.seg_w * seg
+
         losses["total"] = total.item()
         return total, losses
