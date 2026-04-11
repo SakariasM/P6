@@ -2,6 +2,7 @@ torch
 torchvision
 numpy
 matplotlib
+openpyxl
 jupyter
 dgenerate-ultralytics-headless
 tqdm
