@@ -27,18 +27,36 @@ import torchvision.transforms as transforms
 
 
 def select_teacher_layers(features: Dict[str, torch.Tensor],
-                          num_scales: int = 3) -> Tuple[List[str], List[int]]:
+                          num_scales: int = 3,
+                          explicit_layers: Optional[List[str]] = None
+                          ) -> Tuple[List[str], List[int]]:
     """Select teacher feature layers for distillation.
 
     Picks `num_scales` layers sorted by layer index, taking the last N (deepest).
+    If `explicit_layers` is provided, those layers are used directly in the given
+    order, ignoring `num_scales`.
 
     Args:
         features: Dict of {layer_name: tensor} from one prediction
-        num_scales: How many scales to use
+        num_scales: How many scales to use (ignored when explicit_layers is set)
+        explicit_layers: Optional list of layer names to use explicitly
 
     Returns:
         (layer_names, channel_counts) ordered fine to coarse
     """
+    if explicit_layers is not None:
+        names = []
+        channels = []
+        for name in explicit_layers:
+            if name not in features:
+                raise KeyError(
+                    f"Layer '{name}' not in prediction features. "
+                    f"Available: {list(features.keys())}"
+                )
+            names.append(name)
+            channels.append(features[name].shape[0])
+        return names, channels
+
     layers = []
     for name, tensor in features.items():
         parts = name.split(".")
@@ -268,7 +286,9 @@ def main(args):
         raise RuntimeError("First chunk has no predictions with features")
 
     teacher_layer_names, teacher_channels = select_teacher_layers(
-        first_preds[0].features, num_scales=3
+        first_preds[0].features,
+        num_scales=3,
+        explicit_layers=args.teacher_layers,
     )
     print(f"Selected teacher layers: {teacher_layer_names}")
     print(f"Teacher channels: {teacher_channels}")
@@ -593,6 +613,9 @@ if __name__ == "__main__":
                         help="Base channel count for U-Net encoder")
     parser.add_argument("--depth", type=int, default=4,
                         help="Number of encoder/decoder levels")
+    parser.add_argument("--teacher-layers", type=str, nargs="+", default=None,
+                        help="Explicit teacher layer names to use (e.g. model.4 model.9). "
+                             "Default: auto-select last 3 by layer index.")
 
     # Training
     parser.add_argument("--epochs", type=int, default=50)
