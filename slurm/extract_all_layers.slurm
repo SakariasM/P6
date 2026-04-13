@@ -3,10 +3,10 @@
 #SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/extract_all_%A_%a.out
 #SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/extract_all_%A_%a.err
 #SBATCH --array=0-3
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=06:00:00
+#SBATCH --time=12:00:00
 
 # Extract teacher features from ALL 5 candidate YOLO backbone+neck layers.
 # Produces chunks with model.4, model.6, model.9, model.12, model.15 features.
