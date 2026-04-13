@@ -157,9 +157,10 @@ print(c.get('description', ''))
             --batch-size ${BATCH} \
             --lr ${LR} \
             --attention-weight 1.0 \
-            --mimicry-weight 0.5 \
-            --relation-weight 0.5 \
-            --seg-weight 1.0 \
+            --mimicry-weight 2.0 \
+            --relation-weight 10.0 \
+            --seg-weight 0.5 \
+            --grad-clip 1.0 \
             --base-channels ${BASE_CH} \
             --depth \${DEPTH_OVERRIDE} \
             --img-size ${IMG_SIZE} \

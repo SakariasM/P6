@@ -27,5 +27,5 @@ singularity exec --nv \
             --predictions /ceph/project/P6-Machine-Vision/P6/results/hybrid_predictions \
             --image-root /ceph/project/P6-Machine-Vision/P6/data/open-images-v7/train/data \
             --checkpoint-dir /ceph/project/P6-Machine-Vision/P6/trained_models \
-            --output /ceph/project/P6-Machine-Vision/P6/trained_models/training_history.json
+            --output /ceph/project/P6-Machine-Vision/P6/trained_models/training_history_new.json
     "
