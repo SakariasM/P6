@@ -21,6 +21,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from student.student_model import StudentSegmentation
+from teacher.hybrid_predictions import HybridTeacherPrediction  # noqa: F401 - needed for torch.load unpickling
 from training.distillation_loss import SegmentationDistillationLoss
 from training.hybrid_distillation_train import (
     discover_chunk_files,
