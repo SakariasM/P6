@@ -202,10 +202,13 @@ def discover_chunk_files(predictions_path: str) -> List[Path]:
 
 def validate(model, val_chunks, teacher_layer_names, teacher_channels,
              criterion, device, args):
-    """Run validation on held-out chunks. Returns average loss dict."""
+    """Run validation on held-out chunks. Returns average loss dict + IoU/Dice."""
     model.eval()
     val_losses = {"attention": 0.0, "mimicry": 0.0, "relation": 0.0,
                   "total": 0.0, "segmentation": 0.0}
+    iou_sum = 0.0
+    dice_sum = 0.0
+    mask_batches = 0
     val_batches = 0
 
     with torch.no_grad():
@@ -255,11 +258,24 @@ def validate(model, val_chunks, teacher_layer_names, teacher_channels,
                     val_losses[k] += loss_dict.get(k, 0.0)
                 val_batches += 1
 
+                # Compute IoU and Dice when masks are available
+                if teacher_mask is not None:
+                    pred_bin = (seg_output > 0.5).float()
+                    intersection = (pred_bin * teacher_mask).sum()
+                    union = pred_bin.sum() + teacher_mask.sum() - intersection
+                    iou_sum += (intersection / (union + 1e-6)).item()
+                    dice_sum += (2 * intersection / (pred_bin.sum() + teacher_mask.sum() + 1e-6)).item()
+                    mask_batches += 1
+
             del preds, chunk_dataset, chunk_loader
             torch.cuda.empty_cache()
 
     model.train()
-    return {k: v / max(val_batches, 1) for k, v in val_losses.items()}
+    result = {k: v / max(val_batches, 1) for k, v in val_losses.items()}
+    if mask_batches > 0:
+        result['iou'] = iou_sum / mask_batches
+        result['dice'] = dice_sum / mask_batches
+    return result
 
 
 def main(args):
@@ -505,7 +521,8 @@ def main(args):
 
         scheduler.step()
 
-        # Epoch metrics
+        # Epoch metrics (strip internal _batches counter from mid-epoch resume)
+        epoch_losses.pop('_batches', None)
         metrics = {k: v / max(epoch_batches, 1) for k, v in epoch_losses.items()}
 
         print(f"\nEpoch {epoch}/{args.epochs}")
@@ -517,8 +534,9 @@ def main(args):
         val_metrics = validate(model, val_chunks, teacher_layer_names,
                                teacher_channels, criterion, device, args)
         val_seg_str = f"  Seg: {val_metrics['segmentation']:.4f}" if val_metrics.get('segmentation', 0) > 0 else ""
+        val_iou_str = f"  IoU: {val_metrics['iou']:.4f}  Dice: {val_metrics['dice']:.4f}" if 'iou' in val_metrics else ""
         print(f"  Val   — Total: {val_metrics['total']:.4f}  Att: {val_metrics['attention']:.4f}"
-              f"  Mim: {val_metrics['mimicry']:.4f}  Rel: {val_metrics['relation']:.4f}{val_seg_str}")
+              f"  Mim: {val_metrics['mimicry']:.4f}  Rel: {val_metrics['relation']:.4f}{val_seg_str}{val_iou_str}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}  Batches: {epoch_batches}")
 
         history_entry = {
@@ -623,14 +641,14 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--num-workers", type=int, default=4)
-    parser.add_argument("--grad-clip", type=float, default=None,
+    parser.add_argument("--grad-clip", type=float, default=1.0,
                         help="Gradient clipping max norm")
 
     # Distillation loss weights
     parser.add_argument("--attention-weight", type=float, default=1.0)
-    parser.add_argument("--mimicry-weight", type=float, default=0.5)
-    parser.add_argument("--relation-weight", type=float, default=0.5)
-    parser.add_argument("--seg-weight", type=float, default=0.0,
+    parser.add_argument("--mimicry-weight", type=float, default=2.0)
+    parser.add_argument("--relation-weight", type=float, default=10.0)
+    parser.add_argument("--seg-weight", type=float, default=0.5,
                         help="Segmentation loss weight (BCE+Dice vs teacher mask). 0 = disabled.")
     parser.add_argument("--augment", action="store_true",
                         help="Enable data augmentation (color jitter + random flip)")

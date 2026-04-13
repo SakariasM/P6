@@ -112,10 +112,11 @@ def main():
         val_metrics = validate(model, val_chunks, teacher_layer_names,
                                teacher_channels, criterion, device, args)
 
+        iou_str = f"  IoU={val_metrics['iou']:.4f}  Dice={val_metrics['dice']:.4f}" if 'iou' in val_metrics else ""
         print(f"  Val — total={val_metrics['total']:.4f}"
               f"  att={val_metrics['attention']:.4f}"
               f"  mim={val_metrics['mimicry']:.4f}"
-              f"  seg={val_metrics.get('segmentation', 0):.4f}")
+              f"  seg={val_metrics.get('segmentation', 0):.4f}{iou_str}")
 
         # Build history entry
         old_entry = old_history.get(epoch, {})
@@ -129,6 +130,9 @@ def main():
             entry[f"train_{k}"] = val
         for k in train_keys:
             entry[f"val_{k}"] = val_metrics.get(k, 0.0)
+        if 'iou' in val_metrics:
+            entry["val_iou"] = val_metrics["iou"]
+            entry["val_dice"] = val_metrics["dice"]
         entry["lr"] = old_entry.get("lr", 0.0)
 
         history.append(entry)
