@@ -1,0 +1,33 @@
+[
+  {
+    "name": "shallow_only",
+    "description": "Single shallow backbone layer (P3, high-res 80x80)",
+    "teacher_layers": ["model.4"]
+  },
+  {
+    "name": "mid_only",
+    "description": "Single mid backbone layer (P4, 40x40)",
+    "teacher_layers": ["model.6"]
+  },
+  {
+    "name": "deep_only",
+    "description": "Single deep backbone layer (P5, low-res 20x20)",
+    "teacher_layers": ["model.9"]
+  },
+  {
+    "name": "backbone_3",
+    "description": "All 3 backbone layers (current default: P3+P4+P5)",
+    "teacher_layers": ["model.4", "model.6", "model.9"]
+  },
+  {
+    "name": "backbone_plus_neck",
+    "description": "Backbone P5 + neck layers (deeper semantic features)",
+    "teacher_layers": ["model.9", "model.12", "model.15"]
+  },
+  {
+    "name": "all_5_layers",
+    "description": "All 5 extracted layers (maximum teacher knowledge)",
+    "teacher_layers": ["model.4", "model.6", "model.9", "model.12", "model.15"],
+    "depth": 5
+  }
+]
