@@ -7,10 +7,10 @@ Reads training_history.json from each ablation output directory and produces:
 
 Usage:
     python src/compare_ablations.py \
-        --base-dir trained_models \
+        --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
         --configs configs/ablation_configs.json
     python src/compare_ablations.py \
-        --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models \
+        --base-dir trained_models/ablation \
         --configs configs/ablation_configs.json \
         --output trained_models/ablation_comparison.png
 """
@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-def load_config(config_path: Path) -> list[dict]:
+def load_config(config_path: Path) -> dict[str, dict]:
     with open(config_path) as f:
         return json.load(f)
 
@@ -37,22 +37,20 @@ def load_history(history_path: Path) -> list[dict]:
     return history
 
 
-def print_comparison_table(configs: list[dict], base_dir: Path):
+def print_comparison_table(configs: dict[str, dict], base_dir: Path):
     """Print a summary table of best val loss for each config."""
-    header = f"{'Config':<22} {'Layers':<35} {'Epochs':>6} {'Best Val Total':>14} {'Best Val Seg':>12}"
+    header = f"{'Config':<22} {'Layers':<40} {'Epochs':>6} {'Best Val Total':>14} {'Best Val Seg':>12}"
     print(header)
     print("-" * len(header))
 
-    for cfg in configs:
-        name = cfg["name"]
-        out_dir = f"ablation_{name}"
-        history_path = base_dir / out_dir / "training_history.json"
+    for name, cfg in configs.items():
+        history_path = base_dir / name / "training_history.json"
         history = load_history(history_path)
 
         layers_str = ", ".join(cfg["teacher_layers"])
 
         if not history:
-            print(f"{name:<22} {layers_str:<35} {'--':>6} {'no data':>14} {'--':>12}")
+            print(f"{name:<22} {layers_str:<40} {'--':>6} {'no data':>14} {'--':>12}")
             continue
 
         n_epochs = len(history)
@@ -62,24 +60,22 @@ def print_comparison_table(configs: list[dict], base_dir: Path):
             best_entry = min(history, key=lambda e: e.get("val_total", float("inf")))
             best_val = best_entry["val_total"]
             best_seg = best_entry.get("val_segmentation", 0.0)
-            print(f"{name:<22} {layers_str:<35} {n_epochs:>6} {best_val:>14.4f} {best_seg:>12.4f}")
+            print(f"{name:<22} {layers_str:<40} {n_epochs:>6} {best_val:>14.4f} {best_seg:>12.4f}")
         else:
             best_entry = min(history, key=lambda e: e.get("total", float("inf")))
             best_total = best_entry["total"]
-            print(f"{name:<22} {layers_str:<35} {n_epochs:>6} {best_total:>14.4f} {'N/A':>12}")
+            print(f"{name:<22} {layers_str:<40} {n_epochs:>6} {best_total:>14.4f} {'N/A':>12}")
 
 
-def plot_comparison(configs: list[dict], base_dir: Path, output: Path):
+def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
     """Plot val_total loss curves overlaid for all configs."""
-    fig, (ax_total, ax_seg) = plt.subplots(2, 1, figsize=(12, 8),
+    fig, (ax_total, ax_seg) = plt.subplots(2, 1, figsize=(14, 9),
                                             gridspec_kw={"height_ratios": [1, 1]})
 
     has_any_data = False
 
-    for cfg in configs:
-        name = cfg["name"]
-        out_dir = f"ablation_{name}"
-        history_path = base_dir / out_dir / "training_history.json"
+    for name, cfg in configs.items():
+        history_path = base_dir / name / "training_history.json"
         history = load_history(history_path)
         if not history:
             continue
@@ -109,13 +105,13 @@ def plot_comparison(configs: list[dict], base_dir: Path, output: Path):
     ax_total.set_xlabel("Epoch")
     ax_total.set_ylabel("Loss")
     ax_total.set_title("Validation Total Loss by Layer Configuration")
-    ax_total.legend(fontsize=8)
+    ax_total.legend(fontsize=7, loc="upper right")
     ax_total.grid(True, alpha=0.3)
 
     ax_seg.set_xlabel("Epoch")
     ax_seg.set_ylabel("Loss")
     ax_seg.set_title("Validation Segmentation Loss by Layer Configuration")
-    ax_seg.legend(fontsize=8)
+    ax_seg.legend(fontsize=7, loc="upper right")
     ax_seg.grid(True, alpha=0.3)
 
     plt.tight_layout()
@@ -128,7 +124,8 @@ def plot_comparison(configs: list[dict], base_dir: Path, output: Path):
 def main():
     parser = argparse.ArgumentParser(description="Compare ablation training results")
     parser.add_argument("--base-dir", type=Path, required=True,
-                        help="Base directory containing ablation output subdirectories")
+                        help="Base directory containing ablation output subdirectories "
+                             "(e.g. trained_models/ablation)")
     parser.add_argument("--configs", type=Path,
                         default=Path("configs/ablation_configs.json"),
                         help="Path to ablation_configs.json")
