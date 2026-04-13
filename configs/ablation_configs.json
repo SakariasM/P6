@@ -11,21 +11,9 @@
     "description": "Single deep backbone layer (P5, low-res 20x20)",
     "teacher_layers": ["model.9"]
   },
-  "neck1_only": {
-    "description": "Single neck layer (model.12, 40x40)",
-    "teacher_layers": ["model.12"]
-  },
-  "neck2_only": {
-    "description": "Single neck layer (model.15, 80x80)",
-    "teacher_layers": ["model.15"]
-  },
   "shallow_deep": {
     "description": "Shallow + deep backbone (P3+P5, skip mid)",
     "teacher_layers": ["model.4", "model.9"]
-  },
-  "shallow_mid": {
-    "description": "Shallow + mid backbone (P3+P4)",
-    "teacher_layers": ["model.4", "model.6"]
   },
   "mid_deep": {
     "description": "Mid + deep backbone (P4+P5)",
@@ -35,10 +23,6 @@
     "description": "Deep backbone + first neck layer (P5+neck)",
     "teacher_layers": ["model.9", "model.12"]
   },
-  "shallow_neck2": {
-    "description": "Extreme spread: shallowest + deepest",
-    "teacher_layers": ["model.4", "model.15"]
-  },
   "backbone_3": {
     "description": "All 3 backbone layers (P3+P4+P5) — current default",
     "teacher_layers": ["model.4", "model.6", "model.9"]
@@ -46,10 +30,6 @@
   "deep_plus_neck": {
     "description": "Deep backbone + both neck layers (P5+neck1+neck2)",
     "teacher_layers": ["model.9", "model.12", "model.15"]
-  },
-  "spread_3": {
-    "description": "Spread across all: P3 + P5 + neck2",
-    "teacher_layers": ["model.4", "model.9", "model.15"]
   },
   "backbone_plus_neck1": {
     "description": "Full backbone + first neck (4 layers)",
