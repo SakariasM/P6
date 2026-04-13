@@ -182,15 +182,83 @@ def discover_chunk_files(predictions_path: str) -> List[Path]:
     raise FileNotFoundError(f"No prediction files found at {predictions_path}")
 
 
+def validate(model, val_chunks, teacher_layer_names, teacher_channels,
+             criterion, device, args):
+    """Run validation on held-out chunks. Returns average loss dict."""
+    model.eval()
+    val_losses = {"attention": 0.0, "mimicry": 0.0, "relation": 0.0,
+                  "total": 0.0, "segmentation": 0.0}
+    val_batches = 0
+
+    with torch.no_grad():
+        for chunk_path in val_chunks:
+            preds = torch.load(chunk_path, weights_only=False)
+            preds = [p for p in preds if p.features]
+            if not preds:
+                continue
+
+            chunk_dataset = ChunkDataset(
+                preds, teacher_layer_names,
+                image_root=args.image_root,
+                target_size=(args.img_size, args.img_size),
+                augment=False,  # No augmentation for validation
+            )
+            chunk_loader = DataLoader(
+                chunk_dataset, batch_size=args.batch_size,
+                shuffle=False, num_workers=args.num_workers,
+                collate_fn=collate_fn, pin_memory=True,
+            )
+
+            for batch in chunk_loader:
+                images = batch['image'].to(device)
+                teacher_feats = [f.to(device, dtype=torch.float32)
+                                 for f in batch['teacher_features']]
+                teacher_atts = [compute_teacher_attention(f) for f in teacher_feats]
+
+                seg_output, distill_info = model(images)
+                projected = distill_info['projected']
+                student_atts = distill_info['attention_maps']
+
+                n = len(projected)
+                t_feats = teacher_feats[-n:]
+                t_atts = teacher_atts[-n:]
+
+                teacher_mask = batch.get('teacher_mask')
+                if teacher_mask is not None:
+                    teacher_mask = teacher_mask.to(device, dtype=torch.float32)
+
+                _, loss_dict = criterion(
+                    student_atts=student_atts, teacher_atts=t_atts,
+                    projected_student_feats=projected, teacher_feats=t_feats,
+                    student_mask=seg_output, teacher_mask=teacher_mask,
+                )
+
+                for k in val_losses:
+                    val_losses[k] += loss_dict.get(k, 0.0)
+                val_batches += 1
+
+            del preds, chunk_dataset, chunk_loader
+            torch.cuda.empty_cache()
+
+    model.train()
+    return {k: v / max(val_batches, 1) for k, v in val_losses.items()}
+
+
 def main(args):
     """Main training function with chunk-epoch training."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     print(f"Using device: {device}, GPUs available: {n_gpus}\n")
 
-    # Discover chunk files
-    chunk_files = discover_chunk_files(args.predictions)
-    print(f"Found {len(chunk_files)} prediction file(s)")
+    # Discover chunk files and split into train/val
+    all_chunks = discover_chunk_files(args.predictions)
+    print(f"Found {len(all_chunks)} prediction file(s)")
+
+    n_val = max(1, int(len(all_chunks) * args.val_split))
+    # Deterministic split: last N chunks are validation
+    val_chunks = all_chunks[-n_val:]
+    chunk_files = all_chunks[:-n_val]
+    print(f"Train chunks: {len(chunk_files)}, Val chunks: {len(val_chunks)}")
 
     # Load first chunk to determine teacher feature layout
     print("Loading first chunk to determine teacher feature shapes...")
@@ -245,6 +313,7 @@ def main(args):
     start_epoch = 1
     best_loss = float('inf')
     history = []
+    epochs_no_improve = 0
 
     resume_chunk_idx = 0
     resume_epoch_losses = None
@@ -421,11 +490,24 @@ def main(args):
 
         print(f"\nEpoch {epoch}/{args.epochs}")
         seg_str = f"  Seg: {metrics['segmentation']:.4f}" if metrics.get('segmentation', 0) > 0 else ""
-        print(f"  Total: {metrics['total']:.4f}  Att: {metrics['attention']:.4f}"
+        print(f"  Train — Total: {metrics['total']:.4f}  Att: {metrics['attention']:.4f}"
               f"  Mim: {metrics['mimicry']:.4f}  Rel: {metrics['relation']:.4f}{seg_str}")
+
+        # Validation
+        val_metrics = validate(model, val_chunks, teacher_layer_names,
+                               teacher_channels, criterion, device, args)
+        val_seg_str = f"  Seg: {val_metrics['segmentation']:.4f}" if val_metrics.get('segmentation', 0) > 0 else ""
+        print(f"  Val   — Total: {val_metrics['total']:.4f}  Att: {val_metrics['attention']:.4f}"
+              f"  Mim: {val_metrics['mimicry']:.4f}  Rel: {val_metrics['relation']:.4f}{val_seg_str}")
         print(f"  LR: {optimizer.param_groups[0]['lr']:.6f}  Batches: {epoch_batches}")
 
-        history.append({'epoch': epoch, **metrics, 'lr': optimizer.param_groups[0]['lr']})
+        history_entry = {
+            'epoch': epoch,
+            **{f'train_{k}': v for k, v in metrics.items()},
+            **{f'val_{k}': v for k, v in val_metrics.items()},
+            'lr': optimizer.param_groups[0]['lr'],
+        }
+        history.append(history_entry)
 
         with open(output_dir / 'training_history.json', 'w') as f:
             json.dump(history, f, indent=2)
@@ -434,8 +516,10 @@ def main(args):
                      if isinstance(model, torch.nn.DataParallel)
                      else model.state_dict())
 
-        if metrics['total'] < best_loss:
-            best_loss = metrics['total']
+        # Track best model by validation loss
+        if val_metrics['total'] < best_loss:
+            best_loss = val_metrics['total']
+            epochs_no_improve = 0
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': raw_state,
@@ -446,7 +530,10 @@ def main(args):
                 'teacher_layer_names': teacher_layer_names,
                 'args': vars(args),
             }, output_dir / 'best_model.pt')
-            print(f"  -> Saved best model (loss: {best_loss:.4f})")
+            print(f"  -> Saved best model (val_loss: {best_loss:.4f})")
+        else:
+            epochs_no_improve += 1
+            print(f"  No val improvement for {epochs_no_improve}/{args.patience} epochs")
 
         if epoch % args.save_interval == 0:
             torch.save({
@@ -465,6 +552,11 @@ def main(args):
         mid_ckpt = output_dir / 'checkpoint_mid_epoch.pt'
         if mid_ckpt.exists():
             mid_ckpt.unlink()
+
+        # Early stopping
+        if args.patience > 0 and epochs_no_improve >= args.patience:
+            print(f"\nEarly stopping: val loss did not improve for {args.patience} epochs.")
+            break
 
     # Save final model
     raw_state = (model.module.state_dict()
@@ -519,6 +611,12 @@ if __name__ == "__main__":
                         help="Segmentation loss weight (BCE+Dice vs teacher mask). 0 = disabled.")
     parser.add_argument("--augment", action="store_true",
                         help="Enable data augmentation (color jitter + random flip)")
+
+    # Validation / early stopping
+    parser.add_argument("--val-split", type=float, default=0.1,
+                        help="Fraction of chunks to hold out for validation (default: 0.1)")
+    parser.add_argument("--patience", type=int, default=5,
+                        help="Early stopping patience (epochs without val improvement). 0 = disabled.")
 
     # Output
     parser.add_argument("--output-dir", type=str, default="./trained_models")

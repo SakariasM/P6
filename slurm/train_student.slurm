@@ -37,6 +37,8 @@ DEPTH="${DEPTH:-4}"
 IMG_SIZE="${IMG_SIZE:-640}"
 WORKERS="${NUM_WORKERS:-8}"
 SAVE_INT="${SAVE_INTERVAL:-1}"
+VAL_SPLIT="${VAL_SPLIT:-0.1}"
+PATIENCE="${PATIENCE:-5}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
 
 echo "=== Segmentation Distillation Training ==="
@@ -97,6 +99,8 @@ singularity exec --nv \
             --num-workers ${WORKERS} \
             --output-dir '${OUT_DIR}' \
             --save-interval ${SAVE_INT} \
+            --val-split ${VAL_SPLIT} \
+            --patience ${PATIENCE} \
             --augment \
             \${RESUME_ARG}
 
