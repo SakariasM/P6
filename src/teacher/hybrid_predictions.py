@@ -3,7 +3,6 @@ Enhanced prediction capture for hybrid distillation.
 Captures both response-based (logits) and feature-based (intermediate features) knowledge.
 """
 import json
-import cv2
 import torch
 import numpy as np
 from pathlib import Path
@@ -294,6 +293,7 @@ class HybridYOLOInference:
                         masks_data.append(masks_xy[i].tolist())
 
                 # Build merged binary person mask from instance polygons
+                import cv2
                 binary_mask = np.zeros((h, w), dtype=np.uint8)
                 for i in filtered_indices:
                     if i < len(masks_xy):
