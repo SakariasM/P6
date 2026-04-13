@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from training.hybrid_distillation_train import select_teacher_layers
+from student.student_model import StudentSegmentation
 
 
 FEATURES = {
@@ -58,3 +59,47 @@ class TestSelectTeacherLayers:
         )
         assert len(names) == 1
         assert names == ["model.6"]
+
+
+class TestStudentLayerVariants:
+    def test_single_layer_student(self):
+        """Student with 1 teacher layer should work."""
+        model = StudentSegmentation(
+            in_channels=3, base_channels=8, depth=4,
+            teacher_channels=[128],
+        )
+        x = torch.randn(1, 3, 64, 64)
+        output, distill_info = model(x)
+        assert output.shape == (1, 1, 64, 64)
+        assert len(distill_info["projected"]) == 1
+        assert len(distill_info["attention_maps"]) == 1
+
+    def test_two_layer_student(self):
+        """Student with 2 teacher layers should work."""
+        model = StudentSegmentation(
+            in_channels=3, base_channels=8, depth=4,
+            teacher_channels=[128, 256],
+        )
+        x = torch.randn(1, 3, 64, 64)
+        output, distill_info = model(x)
+        assert output.shape == (1, 1, 64, 64)
+        assert len(distill_info["projected"]) == 2
+
+    def test_five_layer_student_requires_depth_5(self):
+        """5 teacher layers requires depth >= 5 (assert in __init__)."""
+        with pytest.raises(AssertionError):
+            StudentSegmentation(
+                in_channels=3, base_channels=8, depth=4,
+                teacher_channels=[64, 128, 128, 256, 256],
+            )
+
+    def test_five_layer_student_with_depth_5(self):
+        """5 teacher layers with depth=5 should work."""
+        model = StudentSegmentation(
+            in_channels=3, base_channels=8, depth=5,
+            teacher_channels=[64, 128, 128, 256, 256],
+        )
+        x = torch.randn(1, 3, 64, 64)
+        output, distill_info = model(x)
+        assert output.shape == (1, 1, 64, 64)
+        assert len(distill_info["projected"]) == 5
