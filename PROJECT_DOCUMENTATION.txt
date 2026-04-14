@@ -62,7 +62,7 @@ P6/
 |   |-- run_inference.py          Demo inference (image, video, webcam)
 |   |-- compare_ablations.py      Compare ablation results (table + plot)
 |   |-- backfill_val_metrics.py   Retroactively compute val metrics for old checkpoints
-|   |-- plot_training_history.py  Plot loss curves from training_history.json
+|   |-- plot_training_history.py  Plot training curves (IoU/Dice, losses, LR)
 |   |
 |   |-- legacy/                   Old/deprecated code
 |       |-- __init__.py
@@ -310,7 +310,7 @@ FEATURE MIMICRY LOSS (FeatureMimicryLoss):
 
 RELATION DISTILLATION LOSS (RelationDistillationLoss):
   Compares Gram matrices (second-order feature statistics) between student and
-  teacher. The Gram matrix G = F * F^T / (C*H*W) captures correlations between
+  teacher. The Gram matrix G = F * F^T / (H*W) captures correlations between
   feature channels — it encodes texture and style information.
   Loss: L1 between student and teacher Gram matrices.
   Purpose: Teaches the student HOW features relate to each other (texture/style).
@@ -325,12 +325,17 @@ SEGMENTATION LOSS (SegmentationLoss):
   from intermediate feature representations.
 
 Combined loss (SegmentationDistillationLoss):
-  total = 1.0 * attention + 0.5 * mimicry + 0.5 * relation + seg_w * segmentation
-  Default seg_weight is 0.0 (disabled) in the Python script but 1.0 in the
-  SLURM training config. All losses handle spatial size mismatches by
-  interpolating to match dimensions. Teacher features are detached (no gradients
-  flow through them). The segmentation loss requires teacher masks to be present
-  in the extracted data (re-extraction needed if using old data).
+  total = 1.0 * attention + 2.0 * mimicry + 10.0 * relation + 0.5 * segmentation
+  These weights were tuned so that each loss component contributes meaningfully
+  to the gradient (mimicry ~60%, seg ~36%, attention ~4%, relation ~1%).
+  All losses handle spatial size mismatches by interpolating to match dimensions.
+  Teacher features are detached (no gradients flow through them).
+
+Validation metrics:
+  In addition to loss values, validation computes IoU and Dice scores by
+  thresholding the student mask at 0.5 and comparing against the teacher mask.
+  Early stopping tracks val_iou (not val_total) since IoU directly measures
+  mask quality and is stable across loss weight changes.
 
 4.4 Training Script (src/training/hybrid_distillation_train.py)
 ---------------------------------------------------------------
@@ -405,19 +410,20 @@ CLI arguments:
   --lr                Learning rate (default 1e-4)
   --weight-decay      AdamW weight decay (default 1e-5)
   --num-workers       DataLoader worker processes (default 4)
-  --grad-clip         Gradient clipping max norm (optional)
+  --grad-clip         Gradient clipping max norm (default 1.0)
   --attention-weight  Attention transfer loss weight (default 1.0)
-  --mimicry-weight    Feature mimicry loss weight (default 0.5)
-  --relation-weight   Relation distillation loss weight (default 0.5)
-  --seg-weight        Segmentation loss weight (default 0.0, SLURM default 1.0)
+  --mimicry-weight    Feature mimicry loss weight (default 2.0)
+  --relation-weight   Relation distillation loss weight (default 10.0)
+  --seg-weight        Segmentation loss weight (default 0.5)
   --augment           Enable data augmentation (color jitter + random flip)
   --output-dir        Where to save checkpoints and models
   --save-interval     Save epoch checkpoint every N epochs (default 10)
   --resume            Path to checkpoint for resuming training
+  --reset-best-loss   Reset best_loss on resume (use after changing loss weights)
   --teacher-layers    Explicit teacher layer names to use (e.g. model.4 model.9).
                       Default: auto-select last 3 by layer index.
   --val-split         Fraction of chunks held out for validation (default 0.1)
-  --patience          Early stopping patience — epochs without val improvement.
+  --patience          Early stopping patience — epochs without val IoU improvement.
                       0 = disabled. (default 5)
 
 4.5 SLURM Training Job (slurm/train_student.slurm)
@@ -432,11 +438,11 @@ Submits the training job to the AAU AI-LAB HPC cluster:
 
 All training hyperparameters are overridable via environment variables:
   EPOCHS, BATCH_SIZE, LEARNING_RATE, ATTENTION_WEIGHT, MIMICRY_WEIGHT,
-  RELATION_WEIGHT, SEG_WEIGHT, BASE_CHANNELS, DEPTH, IMG_SIZE, NUM_WORKERS,
-  SAVE_INTERVAL
+  RELATION_WEIGHT, SEG_WEIGHT, GRAD_CLIP, BASE_CHANNELS, DEPTH, IMG_SIZE,
+  NUM_WORKERS, SAVE_INTERVAL
 
-Data augmentation (--augment) and segmentation loss (--seg-weight 1.0) are
-enabled by default in the SLURM script.
+Data augmentation (--augment) is enabled by default. Loss weights default to
+the rebalanced values (ATT=1.0, MIM=2.0, REL=10.0, SEG=0.5) with grad-clip=1.0.
 
 Auto-resume logic:
   1. First checks for checkpoint_mid_epoch.pt (mid-epoch resume)
@@ -449,7 +455,7 @@ Example usage:
   sbatch --nodelist=ailab-l4-06 slurm/train_student.slurm
 
 Training outputs saved to /ceph/project/P6-Machine-Vision/P6/trained_models/:
-  best_model.pt             Lowest loss checkpoint (saved each improving epoch)
+  best_model.pt             Best IoU checkpoint (saved each improving epoch)
   checkpoint_epoch_N.pt     Periodic checkpoints with full optimizer state
   checkpoint_mid_epoch.pt   Temporary mid-epoch checkpoint for SLURM resilience
   training_history.json     Per-epoch loss metrics (updated every epoch)
@@ -782,17 +788,22 @@ Run 1 (distillation only, no augmentation, no seg loss):
   supervision, resulting in poor segmentation quality (green overlay
   everywhere when tested on webcam).
 
-Run 2 (with augmentation + segmentation loss, seg_weight=1.0):
+Run 2 (with augmentation + segmentation loss, old weights ATT=1, MIM=0.5, REL=0.5, SEG=1):
   Re-extracted teacher data with segmentation_mask field, training from scratch:
-    - Epoch 1: total=0.836, att=0.023, mim=0.171, seg=0.727
-    - Epoch 2: total=0.606, att=0.022, mim=0.141, seg=0.514
-    - Epoch 3: total=0.545, att=0.021, mim=0.138, seg=0.455
+    - Epoch 1: total=0.836, att=0.023, mim=0.171, seg=0.727, IoU=0.668, Dice=0.798
+    - Epoch 7: total=0.457, att=0.020, mim=0.136, seg=0.369, IoU=0.779, Dice=0.874
+    - Epoch 9: total=0.435, att=0.019, mim=0.136, seg=0.347, IoU=0.777, Dice=0.872
 
-  The segmentation loss dominates the total and drops rapidly, indicating the
-  model is learning meaningful person masks. The total is higher than Run 1
-  because it includes the seg loss. Distillation losses (att, mim) are slightly
-  higher initially because gradients are split between feature mimicry and
-  mask accuracy, but both converge.
+  Problem: Segmentation dominated ~80% of gradient, relation loss dead at 0.05%.
+
+Run 3 (rebalanced weights ATT=1, MIM=2, REL=10, SEG=0.5, grad-clip=1.0):
+  Resumed from epoch 9 checkpoint with new weights:
+    - Epoch 10: total=0.458, IoU=0.787, Dice=0.879
+    - Epoch 12: total=0.451, IoU=0.793, Dice=0.883
+
+  Gradient budget now: mimicry ~60%, seg ~36%, attention ~4%, relation ~1%.
+  Relation loss still small but contributing after Gram normalization fix
+  (changed from /(c*h*w) to /(h*w)).
 
 Training speed: ~4.5 it/s on a single NVIDIA L4 GPU
   - ~13 seconds per chunk, ~288 chunks per epoch
@@ -800,7 +811,7 @@ Training speed: ~4.5 it/s on a single NVIDIA L4 GPU
   - ~2.5 epochs per 12-hour SLURM job (with auto-resume)
 
 Each 12-hour SLURM job completes ~2-3 epochs. Training 50 epochs would require
-~20 job submissions. Early stopping is recommended if the seg loss plateaus.
+~20 job submissions. Early stopping triggers when val IoU stops improving.
 
 
 11. LAYER ABLATION STUDY
@@ -899,9 +910,23 @@ configs). This is separate from the existing hybrid_predictions extraction.
 
 STEP 3: Each group member picks a config and starts training.
 
-  CONFIG=shallow_only   sbatch slurm/train_ablation.slurm
-  CONFIG=backbone_3     sbatch slurm/train_ablation.slurm
-  CONFIG=deep_plus_neck sbatch slurm/train_ablation.slurm
+  Singles (1 layer):
+    CONFIG=shallow_only        sbatch slurm/train_ablation.slurm   # model.4
+    CONFIG=mid_only            sbatch slurm/train_ablation.slurm   # model.6
+    CONFIG=deep_only           sbatch slurm/train_ablation.slurm   # model.9
+
+  Pairs (2 layers):
+    CONFIG=shallow_deep        sbatch slurm/train_ablation.slurm   # model.4 + model.9
+    CONFIG=mid_deep            sbatch slurm/train_ablation.slurm   # model.6 + model.9
+    CONFIG=deep_neck1          sbatch slurm/train_ablation.slurm   # model.9 + model.12
+
+  Triples (3 layers):
+    CONFIG=backbone_3          sbatch slurm/train_ablation.slurm   # model.4+6+9 (baseline)
+    CONFIG=deep_plus_neck      sbatch slurm/train_ablation.slurm   # model.9+12+15
+
+  Larger (4-5 layers):
+    CONFIG=backbone_plus_neck1 sbatch slurm/train_ablation.slurm   # model.4+6+9+12
+    CONFIG=all_5_layers        sbatch slurm/train_ablation.slurm   # all 5 (depth=5)
 
   Each person picks a different config. Multiple configs can train in parallel
   on different GPUs/nodes.
