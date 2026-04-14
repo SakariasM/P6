@@ -38,7 +38,7 @@ class RelationDistillationLoss(nn.Module):
     def _gram(feat: torch.Tensor) -> torch.Tensor:
         b, c, h, w = feat.shape
         f = feat.view(b, c, h * w)
-        return torch.bmm(f, f.transpose(1, 2)) / (c * h * w)
+        return torch.bmm(f, f.transpose(1, 2)) / (h * w)
 
     def forward(self, projected_student_feats: list, teacher_feats: list) -> torch.Tensor:
         assert len(projected_student_feats) == len(teacher_feats)

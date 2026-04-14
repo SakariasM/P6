@@ -348,6 +348,7 @@ def main(args):
     # Resume
     start_epoch = 1
     best_loss = float('inf')
+    best_iou = 0.0
     history = []
     epochs_no_improve = 0
 
@@ -367,8 +368,19 @@ def main(args):
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_loss = checkpoint.get('loss', float('inf'))
+        best_iou = 0.0
         if 'history' in checkpoint:
             history = checkpoint['history']
+            # Recover best IoU from history
+            iou_values = [e.get('val_iou', 0.0) for e in history]
+            if iou_values:
+                best_iou = max(iou_values)
+
+        if args.reset_best_loss:
+            best_loss = float('inf')
+            best_iou = 0.0
+            epochs_no_improve = 0
+            print("Reset best_loss and best_iou (--reset-best-loss)")
 
         # Mid-epoch resume: checkpoint saved partway through an epoch
         if checkpoint.get('chunk_idx') is not None:
@@ -377,7 +389,7 @@ def main(args):
             resume_epoch_losses = checkpoint.get('epoch_losses')
             print(f"Resumed mid-epoch {checkpoint['epoch']} at chunk {resume_chunk_idx}/{len(chunk_files)}, best loss: {best_loss:.4f}\n")
         else:
-            print(f"Resumed from epoch {checkpoint['epoch']}, best loss: {best_loss:.4f}\n")
+            print(f"Resumed from epoch {checkpoint['epoch']}, best loss: {best_loss:.4f}, best IoU: {best_iou:.4f}\n")
     elif args.resume:
         print(f"Warning: --resume path '{args.resume}' not found, starting from scratch.\n")
 
@@ -554,8 +566,15 @@ def main(args):
                      if isinstance(model, torch.nn.DataParallel)
                      else model.state_dict())
 
-        # Track best model by validation loss
-        if val_metrics['total'] < best_loss:
+        # Track best model by validation IoU (falls back to val_total if no masks)
+        val_iou = val_metrics.get('iou', 0.0)
+        improved = False
+        if val_iou > 0 and val_iou > best_iou:
+            best_iou = val_iou
+            improved = True
+        elif val_iou == 0 and val_metrics['total'] < best_loss:
+            improved = True
+        if improved:
             best_loss = val_metrics['total']
             epochs_no_improve = 0
             torch.save({
@@ -563,12 +582,14 @@ def main(args):
                 'model_state_dict': raw_state,
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': best_loss,
+                'best_iou': best_iou,
                 'history': history,
                 'teacher_channels': teacher_channels,
                 'teacher_layer_names': teacher_layer_names,
                 'args': vars(args),
             }, output_dir / 'best_model.pt')
-            print(f"  -> Saved best model (val_loss: {best_loss:.4f})")
+            iou_str = f", IoU: {best_iou:.4f}" if best_iou > 0 else ""
+            print(f"  -> Saved best model (val_loss: {best_loss:.4f}{iou_str})")
         else:
             epochs_no_improve += 1
             print(f"  No val improvement for {epochs_no_improve}/{args.patience} epochs")
@@ -658,6 +679,8 @@ if __name__ == "__main__":
                         help="Fraction of chunks to hold out for validation (default: 0.1)")
     parser.add_argument("--patience", type=int, default=5,
                         help="Early stopping patience (epochs without val improvement). 0 = disabled.")
+    parser.add_argument("--reset-best-loss", action="store_true",
+                        help="Reset best_loss on resume (use after changing loss weights)")
 
     # Output
     parser.add_argument("--output-dir", type=str, default="./trained_models")
