@@ -297,7 +297,7 @@ def main(args):
         print("Loading teacher model...")
     teacher = OnlineTeacher(
         model_path=args.teacher_model,
-        feature_layers=args.teacher_layers,
+        feature_layers=None,  # register hooks on all default layers
         device=device,
         half=True,
         person_class=0,
@@ -310,18 +310,24 @@ def main(args):
         for name, shape in shapes.items():
             print(f"  {name}: {shape}")
 
-    # Determine which layers and channel counts to use
-    if args.teacher_layers:
-        teacher_layer_names = args.teacher_layers
-        teacher_channels = [shapes[n][1] for n in teacher_layer_names]
+    # Determine which layers and channel counts to use (exclude if requested)
+    if args.exclude_layers:
+        unknown = [l for l in args.exclude_layers if l not in shapes]
+        if unknown and is_main(rank):
+            print(f"Warning: --exclude-layers contains unknown layers: {unknown}")
+        filtered_shapes = {k: v for k, v in shapes.items()
+                          if k not in args.exclude_layers}
+        if not filtered_shapes:
+            raise ValueError("All teacher layers were excluded — nothing left to train on")
+        if is_main(rank):
+            print(f"Excluded teacher layers: {args.exclude_layers}")
     else:
-        # Build a features-like dict to reuse select_teacher_layers
-        pseudo_feats = {
-            name: torch.empty(shape) for name, shape in shapes.items()
-        }
-        teacher_layer_names, teacher_channels = select_teacher_layers(
-            pseudo_feats, num_scales=3,
-        )
+        filtered_shapes = shapes
+
+    pseudo_feats = {name: torch.empty(shape) for name, shape in filtered_shapes.items()}
+    teacher_layer_names, teacher_channels = select_teacher_layers(
+        pseudo_feats, num_scales=len(pseudo_feats),
+    )
     if is_main(rank):
         print(f"Using teacher layers: {teacher_layer_names}")
         print(f"Teacher channels: {teacher_channels}\n")
@@ -590,9 +596,10 @@ if __name__ == "__main__":
     # Teacher
     parser.add_argument("--teacher-model", type=str, default="yolo26n-seg.pt",
                         help="Path to YOLO teacher model weights")
-    parser.add_argument("--teacher-layers", type=str, nargs="+", default=None,
-                        help="Teacher feature layers (e.g. model.4 model.6 model.9). "
-                             "Auto-selected if omitted.")
+    parser.add_argument("--exclude-layers", type=str, nargs="+", default=None,
+                        help="Teacher layer names to EXCLUDE from distillation "
+                             "(e.g. model.9 to skip the deepest layer). "
+                             "All available layers are used by default.")
 
     # Student architecture
     parser.add_argument("--base-channels", type=int, default=32,
