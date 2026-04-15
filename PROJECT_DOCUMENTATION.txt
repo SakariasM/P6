@@ -924,9 +924,9 @@ STEP 3: Each group member picks a config and starts training.
     CONFIG=backbone_3          sbatch slurm/train_ablation.slurm   # model.4+6+9 (baseline)
     CONFIG=deep_plus_neck      sbatch slurm/train_ablation.slurm   # model.9+12+15
 
-  Larger (4-5 layers):
+  Larger (4 layers):
     CONFIG=backbone_plus_neck1 sbatch slurm/train_ablation.slurm   # model.4+6+9+12
-    CONFIG=all_5_layers        sbatch slurm/train_ablation.slurm   # all 5 (depth=5)
+    CONFIG=backbone_plus_neck2 sbatch slurm/train_ablation.slurm   # model.4+6+9+15
 
   Each person picks a different config. Multiple configs can train in parallel
   on different GPUs/nodes.
@@ -980,7 +980,7 @@ CONFIG=deep_plus_neck sbatch slurm/train_ablation.slurm   # model.9+12+15
 
 # --- LARGER ---
 CONFIG=backbone_plus_neck1 sbatch slurm/train_ablation.slurm  # model.4+6+9+12
-CONFIG=all_5_layers   sbatch slurm/train_ablation.slurm   # all 5 (depth=5)
+CONFIG=backbone_plus_neck2 sbatch slurm/train_ablation.slurm  # model.4+6+9+15
 
 # Compare results
 python src/compare_ablations.py \
@@ -1003,10 +1003,12 @@ CONFIG= sbatch slurm/train_ablation.slurm   # (will print config list and exit)
   - Each config creates a StudentSegmentation model with teacher_channels
     matching only the selected layers. Fewer layers = fewer projection heads
     = slightly fewer parameters.
-  - The all_5_layers config requires depth=5 in the student model (5 encoder
-    levels instead of 4) because the number of teacher layers cannot exceed
-    the encoder depth. This is set automatically via the "depth" field in
-    ablation_configs.json.
+  - All configs use depth=4 (default), keeping the student at ~1.4-1.46M params
+    (~53% of the teacher's 2.7M). This is intentional: a 5-layer config would
+    require depth=5, which inflates the student to 5.66M params (210% of the
+    teacher), defeating the purpose of knowledge distillation. The two 4-layer
+    configs (backbone_plus_neck1 and backbone_plus_neck2) test whether adding
+    a 4th layer helps while keeping the model deployable on Raspberry Pi 5.
   - All configs share the same extraction data (ablation_predictions/).
     No re-extraction is needed when adding new configs.
   - Auto-resume works per config: re-submitting the same CONFIG picks up
