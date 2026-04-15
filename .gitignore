@@ -12,6 +12,7 @@ include/
 pyvenv.cfg
 share/
 etc/
+trained_models/
 test_data/*
 # Jupyter
 .ipynb_checkpoints/
