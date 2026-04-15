@@ -29,14 +29,17 @@ EPOCHS="${EPOCHS:-50}"
 BATCH="${BATCH_SIZE:-8}"
 LR="${LEARNING_RATE:-1e-4}"
 ATT_W="${ATTENTION_WEIGHT:-1.0}"
-MIM_W="${MIMICRY_WEIGHT:-0.5}"
-REL_W="${RELATION_WEIGHT:-0.5}"
-SEG_W="${SEG_WEIGHT:-1.0}"
+MIM_W="${MIMICRY_WEIGHT:-2.0}"
+REL_W="${RELATION_WEIGHT:-1.0}"
+SEG_W="${SEG_WEIGHT:-0.5}"
+GRAD_CLIP="${GRAD_CLIP:-1.0}"
 BASE_CH="${BASE_CHANNELS:-8}"
 DEPTH="${DEPTH:-4}"
 IMG_SIZE="${IMG_SIZE:-640}"
 WORKERS="${NUM_WORKERS:-8}"
 SAVE_INT="${SAVE_INTERVAL:-1}"
+VAL_SPLIT="${VAL_SPLIT:-0.1}"
+PATIENCE="${PATIENCE:-5}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
 
 echo "=== Segmentation Distillation Training ==="
@@ -91,12 +94,15 @@ singularity exec --nv \
             --mimicry-weight ${MIM_W} \
             --relation-weight ${REL_W} \
             --seg-weight ${SEG_W} \
+            --grad-clip ${GRAD_CLIP} \
             --base-channels ${BASE_CH} \
             --depth ${DEPTH} \
             --img-size ${IMG_SIZE} \
             --num-workers ${WORKERS} \
             --output-dir '${OUT_DIR}' \
             --save-interval ${SAVE_INT} \
+            --val-split ${VAL_SPLIT} \
+            --patience ${PATIENCE} \
             --augment \
             \${RESUME_ARG}
 

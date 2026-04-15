@@ -529,6 +529,9 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint-interval", type=int, default=50)
     parser.add_argument("--no-features", action="store_true",
                        help="Disable feature extraction")
+    parser.add_argument("--feature-layers", type=str, nargs="+", default=None,
+                        help="Specific backbone layers to extract (e.g. model.4 model.6 model.9). "
+                             "Default: all candidate layers [4, 6, 9, 12, 15].")
     parser.add_argument("--worker-id", type=int, default=0,
                        help="Index of this worker for parallel extraction (0-based)")
     parser.add_argument("--num-workers", type=int, default=1,
@@ -546,7 +549,8 @@ if __name__ == "__main__":
             conf_threshold=args.conf,
             iou_threshold=args.iou,
             filter_class=0 if args.person_only else None,
-            extract_features=not args.no_features
+            extract_features=not args.no_features,
+            feature_layers=args.feature_layers,
         )
 
         # Process dataset
