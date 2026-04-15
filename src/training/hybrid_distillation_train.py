@@ -201,23 +201,24 @@ def main(args):
 
     available_features = first_preds[0].features
 
-    if args.teacher_layers:
-        # User explicitly specified which teacher layers to use
-        missing = [l for l in args.teacher_layers if l not in available_features]
-        if missing:
-            available = list(available_features.keys())
-            raise ValueError(
-                f"Requested teacher layers not found in predictions: {missing}\n"
-                f"Available layers: {available}"
-            )
-        teacher_layer_names = args.teacher_layers
-        teacher_channels = [available_features[name].shape[0] for name in teacher_layer_names]
-        print(f"Using user-specified teacher layers: {teacher_layer_names}")
+    if args.exclude_layers:
+        # Remove excluded layers from available features before selection
+        unknown = [l for l in args.exclude_layers if l not in available_features]
+        if unknown:
+            print(f"Warning: --exclude-layers contains unknown layers: {unknown}")
+        filtered = {k: v for k, v in available_features.items()
+                    if k not in args.exclude_layers}
+        if not filtered:
+            raise ValueError("All teacher layers were excluded — nothing left to train on")
+        print(f"Excluded teacher layers: {args.exclude_layers}")
+        teacher_layer_names, teacher_channels = select_teacher_layers(
+            filtered, num_scales=len(filtered)
+        )
     else:
         teacher_layer_names, teacher_channels = select_teacher_layers(
-            available_features, num_scales=3
+            available_features, num_scales=len(available_features)
         )
-        print(f"Auto-selected teacher layers: {teacher_layer_names}")
+    print(f"Using teacher layers: {teacher_layer_names}")
 
     print(f"Teacher channels: {teacher_channels}")
     del first_preds
@@ -513,10 +514,10 @@ if __name__ == "__main__":
                         help="Input image size")
 
     # Teacher layer selection
-    parser.add_argument("--teacher-layers", type=str, nargs="+", default=None,
-                        help="Explicit teacher layer names to use for distillation "
-                             "(e.g. model.4 model.6). If omitted, auto-selects the "
-                             "last N deepest layers.")
+    parser.add_argument("--exclude-layers", type=str, nargs="+", default=None,
+                        help="Teacher layer names to EXCLUDE from distillation "
+                             "(e.g. model.9 to skip the deepest layer). "
+                             "All available layers are used by default.")
 
     # Student architecture
     parser.add_argument("--base-channels", type=int, default=32,
