@@ -41,6 +41,7 @@ SAVE_INT="${SAVE_INTERVAL:-1}"
 VAL_SPLIT="${VAL_SPLIT:-0.1}"
 PATIENCE="${PATIENCE:-5}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models}"
+EXCLUDE_LAYERS="${EXCLUDE_LAYERS:-}"
 
 echo "=== Segmentation Distillation Training ==="
 echo "Node: $(hostname)"
@@ -50,6 +51,9 @@ echo "Batch size: ${BATCH}"
 echo "LR: ${LR}"
 echo "Loss weights: att=${ATT_W}, mim=${MIM_W}, rel=${REL_W}, seg=${SEG_W}"
 echo "Student: base_ch=${BASE_CH}, depth=${DEPTH}, img=${IMG_SIZE}"
+if [ -n "${EXCLUDE_LAYERS}" ]; then
+    echo "Excluding teacher layers: ${EXCLUDE_LAYERS}"
+fi
 echo ""
 
 mkdir -p "${OUT_DIR}"
@@ -67,6 +71,12 @@ singularity exec --nv \
         mkdir -p \"\${TMPDIR}\"
 
         nvidia-smi
+
+        # Exclude layers arg (conditionally added)
+        EXCLUDE_ARG=''
+        if [ -n '${EXCLUDE_LAYERS}' ]; then
+            EXCLUDE_ARG=\"--exclude-layers ${EXCLUDE_LAYERS}\"
+        fi
 
         # Resume from latest checkpoint (prefer mid-epoch over epoch-end)
         RESUME_ARG=''
@@ -104,6 +114,7 @@ singularity exec --nv \
             --val-split ${VAL_SPLIT} \
             --patience ${PATIENCE} \
             --augment \
+            \${EXCLUDE_ARG} \
             \${RESUME_ARG}
 
         echo ''
