@@ -668,7 +668,7 @@ if __name__ == "__main__":
     # Distillation loss weights
     parser.add_argument("--attention-weight", type=float, default=1.0)
     parser.add_argument("--mimicry-weight", type=float, default=2.0)
-    parser.add_argument("--relation-weight", type=float, default=10.0)
+    parser.add_argument("--relation-weight", type=float, default=1.0)
     parser.add_argument("--seg-weight", type=float, default=0.5,
                         help="Segmentation loss weight (BCE+Dice vs teacher mask). 0 = disabled.")
     parser.add_argument("--augment", action="store_true",
