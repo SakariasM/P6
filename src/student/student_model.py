@@ -26,15 +26,28 @@ from typing import List, Optional, Tuple
 from student.attention import CBAM, AttentionProjection
 
 
+class DepthwiseSeparableConv(nn.Module):
+    """Depthwise separable convolution: depthwise + pointwise."""
+    def __init__(self, in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False):
+        super().__init__()
+        self.depthwise = nn.Conv2d(in_ch, in_ch, kernel_size, stride=stride,
+                                   padding=padding, groups=in_ch, bias=False)
+        self.pointwise = nn.Conv2d(in_ch, out_ch, 1, bias=bias)
+
+    def forward(self, x):
+        return self.pointwise(self.depthwise(x))
+
+
 class DownBlock(nn.Module):
     """Encoder: stride-2 conv -> BN -> LeakyReLU -> conv -> BN -> LeakyReLU."""
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch, out_ch, depthwise=False):
         super().__init__()
+        conv_cls = DepthwiseSeparableConv if depthwise else nn.Conv2d
         self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, stride=2, padding=1, bias=False),
+            conv_cls(in_ch, out_ch, 3, stride=2, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            conv_cls(out_ch, out_ch, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.LeakyReLU(0.2, inplace=True),
         )
@@ -45,13 +58,14 @@ class DownBlock(nn.Module):
 
 class UpBlock(nn.Module):
     """Decoder: upsample 2x -> cat(skip) -> conv -> BN -> ReLU -> conv -> BN -> ReLU."""
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch, out_ch, depthwise=False):
         super().__init__()
+        conv_cls = DepthwiseSeparableConv if depthwise else nn.Conv2d
         self.block = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            conv_cls(in_ch, out_ch, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+            conv_cls(out_ch, out_ch, 3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
         )
@@ -97,7 +111,9 @@ class StudentSegmentation(nn.Module):
     """
 
     def __init__(self, in_channels=3, base_channels=32, depth=4,
-                 teacher_channels: Optional[List[int]] = None):
+                 teacher_channels: Optional[List[int]] = None,
+                 use_cbam: bool = True, depthwise: bool = False,
+                 bottleneck_blocks: int = 3):
         super().__init__()
 
         if teacher_channels is None:
@@ -105,6 +121,7 @@ class StudentSegmentation(nn.Module):
 
         self.depth = depth
         self.teacher_channels = teacher_channels
+        self.use_cbam = use_cbam
 
         # Encoder channels: [64, 128, 256, 512] for base=32, depth=4
         self._enc_channels = [base_channels * (2 ** i) for i in range(1, depth + 1)]
@@ -122,16 +139,15 @@ class StudentSegmentation(nn.Module):
         enc_in = base_channels
         for i in range(depth):
             enc_out = self._enc_channels[i]
-            self.encoders.append(DownBlock(enc_in, enc_out))
-            self.cbams.append(CBAM(enc_out))
+            self.encoders.append(DownBlock(enc_in, enc_out, depthwise=depthwise))
+            self.cbams.append(CBAM(enc_out) if use_cbam else nn.Identity())
             enc_in = enc_out
 
         # Bottleneck
         bottleneck_ch = self._enc_channels[-1]
+        dilations = [1, 2, 1, 4, 1][:bottleneck_blocks]
         self.bottleneck = nn.Sequential(
-            ResBlock(bottleneck_ch, dilation=1),
-            ResBlock(bottleneck_ch, dilation=2),
-            ResBlock(bottleneck_ch, dilation=1),
+            *[ResBlock(bottleneck_ch, dilation=d) for d in dilations]
         )
 
         # Decoder
@@ -141,7 +157,7 @@ class StudentSegmentation(nn.Module):
             skip_idx = depth - 1 - i
             skip_ch = self._enc_channels[skip_idx - 1] if skip_idx > 0 else base_channels
             dec_out = skip_ch
-            self.decoders.append(UpBlock(dec_in_ch + skip_ch, dec_out))
+            self.decoders.append(UpBlock(dec_in_ch + skip_ch, dec_out, depthwise=depthwise))
             dec_in_ch = dec_out
 
         # Output head
@@ -173,9 +189,16 @@ class StudentSegmentation(nn.Module):
         for i in range(self.depth):
             skips.append(x)
             x = self.encoders[i](x)
-            sp_map, x = self.cbams[i](x)
+            if self.use_cbam:
+                sp_map, x = self.cbams[i](x)
+                attn_maps.append(sp_map)
+            else:
+                # Synthesise a spatial attention map for distillation compatibility
+                avg_f = x.mean(dim=1, keepdim=True)
+                max_f = x.max(dim=1, keepdim=True)[0]
+                sp_map = torch.sigmoid(avg_f + max_f)
+                attn_maps.append(sp_map)
             enc_features.append(x)
-            attn_maps.append(sp_map)
 
         # Bottleneck
         x = self.bottleneck(x)
@@ -197,3 +220,30 @@ class StudentSegmentation(nn.Module):
         }
 
         return output, distill_info
+
+
+# ---------------------------------------------------------------------------
+# Variant factory for ablation studies
+# ---------------------------------------------------------------------------
+
+ABLATION_VARIANTS = {
+    "baseline": dict(base_channels=32, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
+    "no_cbam": dict(base_channels=32, depth=4, use_cbam=False, depthwise=False, bottleneck_blocks=3),
+    "depthwise": dict(base_channels=32, depth=4, use_cbam=True, depthwise=True, bottleneck_blocks=3),
+    "deep_bottleneck": dict(base_channels=32, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=5),
+    "shallow": dict(base_channels=32, depth=3, use_cbam=True, depthwise=False, bottleneck_blocks=3),
+    "wide": dict(base_channels=48, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
+}
+
+
+def build_variant(name: str, teacher_channels: Optional[List[int]] = None) -> "StudentSegmentation":
+    """Build a named architecture variant for ablation studies."""
+    if name not in ABLATION_VARIANTS:
+        raise ValueError(f"Unknown variant '{name}'. Choose from: {list(ABLATION_VARIANTS.keys())}")
+    cfg = ABLATION_VARIANTS[name]
+    # Adjust teacher_channels length to match depth
+    tc = teacher_channels or [128, 128, 256]
+    depth = cfg["depth"]
+    if len(tc) > depth:
+        tc = tc[-depth:]
+    return StudentSegmentation(in_channels=3, teacher_channels=tc, **cfg)
