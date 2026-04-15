@@ -16,7 +16,7 @@
 #
 #   CONFIG=shallow_only   sbatch slurm/train_ablation.slurm
 #   CONFIG=backbone_3     sbatch slurm/train_ablation.slurm
-#   CONFIG=all_5_layers   sbatch slurm/train_ablation.slurm
+#   CONFIG=backbone_plus_neck2  sbatch slurm/train_ablation.slurm
 #
 # Available configs (see configs/ablation_configs.json):
 #
@@ -39,9 +39,9 @@
 #     deep_plus_neck      model.9+12+15          (deep+neck)
 #     spread_3            model.4+9+15           (spread)
 #
-#   LARGER:
-#     backbone_plus_neck1 model.4+6+9+12         (4 layers)
-#     all_5_layers        model.4+6+9+12+15      (5 layers, depth=5)
+#   LARGER (4 layers):
+#     backbone_plus_neck1 model.4+6+9+12         (backbone + neck1)
+#     backbone_plus_neck2 model.4+6+9+15         (backbone + neck2)
 #
 # Supports auto-resume: re-submitting the same CONFIG will pick up
 # from the latest checkpoint.
