@@ -158,7 +158,7 @@ print(c.get('description', ''))
             --lr ${LR} \
             --attention-weight 1.0 \
             --mimicry-weight 2.0 \
-            --relation-weight 10.0 \
+            --relation-weight 1.0 \
             --seg-weight 0.5 \
             --grad-clip 1.0 \
             --base-channels ${BASE_CH} \

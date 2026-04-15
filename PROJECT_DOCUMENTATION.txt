@@ -325,9 +325,9 @@ SEGMENTATION LOSS (SegmentationLoss):
   from intermediate feature representations.
 
 Combined loss (SegmentationDistillationLoss):
-  total = 1.0 * attention + 2.0 * mimicry + 10.0 * relation + 0.5 * segmentation
+  total = 1.0 * attention + 2.0 * mimicry + 1.0 * relation + 0.5 * segmentation
   These weights were tuned so that each loss component contributes meaningfully
-  to the gradient (mimicry ~60%, seg ~36%, attention ~4%, relation ~1%).
+  to the gradient after the Gram normalization fix.
   All losses handle spatial size mismatches by interpolating to match dimensions.
   Teacher features are detached (no gradients flow through them).
 
@@ -413,7 +413,7 @@ CLI arguments:
   --grad-clip         Gradient clipping max norm (default 1.0)
   --attention-weight  Attention transfer loss weight (default 1.0)
   --mimicry-weight    Feature mimicry loss weight (default 2.0)
-  --relation-weight   Relation distillation loss weight (default 10.0)
+  --relation-weight   Relation distillation loss weight (default 1.0)
   --seg-weight        Segmentation loss weight (default 0.5)
   --augment           Enable data augmentation (color jitter + random flip)
   --output-dir        Where to save checkpoints and models
@@ -1011,3 +1011,85 @@ CONFIG= sbatch slurm/train_ablation.slurm   # (will print config list and exit)
     No re-extraction is needed when adding new configs.
   - Auto-resume works per config: re-submitting the same CONFIG picks up
     from that config's latest checkpoint.
+
+
+12. STUFF FOR THE REPORT
+================================================================================
+
+Notes, framings, and key findings to include in the P6 report.
+
+12.1 Loss Weight Rebalancing (Mid-Training Correction)
+-------------------------------------------------------
+After analyzing training diagnostics at epoch 9, we identified that the
+segmentation loss dominated ~80% of the gradient while the relation distillation
+loss was effectively dead at ~0.05%. We rebalanced the loss weights and resumed
+training from the existing checkpoint. This is a legitimate practice when a
+problem is discovered mid-training — the model retains its learned features
+while future gradient updates are rebalanced.
+
+Old weights: ATT=1.0, MIM=0.5, REL=0.5, SEG=1.0
+  -> Gradient budget: seg ~80%, mim ~16%, att ~4%, rel ~0.05%
+
+Intermediate weights (epoch 10-12): ATT=1.0, MIM=2.0, REL=10.0, SEG=0.5
+  -> Gradient budget: mim ~60%, seg ~36%, att ~4%, rel ~1%
+
+The Gram matrix normalization in the relation loss was also dividing by (C*H*W)
+instead of (H*W), making the raw loss value ~128-256x smaller than it should
+have been. After fixing the normalization (epoch 13+), the REL=10.0 weight
+caused relation to dominate at ~61% of gradient. Weight was corrected to 1.0.
+
+Final weights: ATT=1.0, MIM=2.0, REL=1.0, SEG=0.5
+  Training resumed from epoch 12 checkpoint with --reset-best-loss.
+
+The plot script supports marking the weight change point:
+  python src/plot_training_history.py --weight-change 9.5
+
+12.2 Offline vs Online Knowledge Distillation
+----------------------------------------------
+A key architectural decision worth discussing: we use offline KD (extract
+teacher features once, train student repeatedly) rather than online KD (run
+teacher every batch). Trade-offs:
+
+  Offline advantages:
+    - Teacher runs once — saves GPU time across multiple student experiments
+    - Enables the ablation study: same extracted data, different layer subsets
+    - Student training is faster (no teacher forward pass per batch)
+    - Reproducible: same teacher features every run
+
+  Offline disadvantages:
+    - Large disk footprint (~300GB for 288 chunks with 5 layers)
+    - Teacher features are fixed — no data augmentation on teacher side
+    - Augmentation must be applied consistently to images AND stored features
+
+12.3 Ablation Study Design
+---------------------------
+The ablation study is a systematic experiment varying which teacher layers the
+student learns from, while keeping all other hyperparameters fixed. This
+isolates the effect of teacher layer selection on student segmentation quality.
+
+Key design choices to mention:
+  - 10 configurations spanning singles, pairs, triples, and larger subsets
+  - All configs use the same rebalanced loss weights and hyperparameters
+  - All configs train from scratch (no transfer between configs)
+  - IoU/Dice as primary metrics (directly measures mask quality)
+  - Early stopping on val IoU prevents wasted compute
+
+12.4 Model Efficiency
+----------------------
+The student model (U-Net, ~1.45M params) is roughly half the size of the
+teacher (YOLO26n-seg, 2.7M params). For the report, benchmark both using:
+  python src/benchmark_model.py --checkpoint trained_models/best_model.pt
+
+Key comparison points: parameter count, FLOPs, and inference speed on CPU
+(representing the Raspberry Pi 5 deployment target).
+
+12.5 Training Metrics Interpretation
+--------------------------------------
+  - IoU (Intersection over Union): Primary metric for segmentation quality.
+    Measures overlap between predicted and teacher mask. Range 0-1, higher
+    is better. At epoch 12: 0.793.
+  - Dice score: Related to IoU (Dice = 2*IoU / (1+IoU)). More forgiving of
+    small regions. At epoch 12: 0.883.
+  - These metrics are measured against the teacher's pseudo ground-truth masks,
+    not human annotations. The student can never exceed the teacher's mask
+    quality — the ceiling is the teacher's own accuracy on the dataset.
