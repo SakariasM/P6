@@ -3,12 +3,12 @@
 #SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/train_online_%j.out
 #SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/train_online_%j.err
 #SBATCH --gres=gpu:4
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=4
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
-#SBATCH --time=24:00:00
+#SBATCH --time=12:00:00
 
-# Online distillation: teacher + student run simultaneously on 8 GPUs.
+# Online distillation: teacher + student run simultaneously on 4 GPUs.
 # Uses torchrun for DistributedDataParallel.
 #
 # Usage: sbatch slurm/train_online.slurm
@@ -39,6 +39,19 @@ WORKERS="${NUM_WORKERS:-8}"
 SAVE_INT="${SAVE_INTERVAL:-10}"
 OUT_DIR="${OUTPUT_DIR:-/ceph/project/P6-Machine-Vision/P6/trained_models_online}"
 GRAD_CLIP="${GRAD_CLIP:-1.0}"
+EXCLUDE_LAYERS="${EXCLUDE_LAYERS:-}"
+
+# Exclude one layer
+#EXCLUDE_LAYERS="model.9" sbatch slurm/train_online.slurm
+
+# Exclude multiple layers
+#EXCLUDE_LAYERS="model.4 model.9" sbatch slurm/train_online.slurm
+
+# Same works for the offline script
+#EXCLUDE_LAYERS="model.9" sbatch slurm/train_student.slurm
+
+# No exclusion (default — uses all layers)
+sbatch slurm/train_online.slurm
 
 echo "=== Online Distillation Training (8 GPU DDP) ==="
 echo "Node: $(hostname)"
@@ -49,6 +62,9 @@ echo "Batch size: ${BATCH} x 8 GPUs = $((BATCH * 8)) effective"
 echo "LR: ${LR}"
 echo "Loss weights: att=${ATT_W}, mim=${MIM_W}, rel=${REL_W}, seg=${SEG_W}"
 echo "Student: base_ch=${BASE_CH}, depth=${DEPTH}, img=${IMG_SIZE}"
+if [ -n "${EXCLUDE_LAYERS}" ]; then
+    echo "Excluding teacher layers: ${EXCLUDE_LAYERS}"
+fi
 echo ""
 
 mkdir -p "${OUT_DIR}"
@@ -66,6 +82,12 @@ singularity exec --nv \
         mkdir -p \"\${TMPDIR}\"
 
         nvidia-smi
+
+        # Exclude layers arg (conditionally added)
+        EXCLUDE_ARG=''
+        if [ -n '${EXCLUDE_LAYERS}' ]; then
+            EXCLUDE_ARG=\"--exclude-layers ${EXCLUDE_LAYERS}\"
+        fi
 
         # Resume from latest checkpoint
         RESUME_ARG=''
@@ -96,6 +118,7 @@ singularity exec --nv \
             --output-dir '${OUT_DIR}' \
             --save-interval ${SAVE_INT} \
             --grad-clip ${GRAD_CLIP} \
+            \${EXCLUDE_ARG} \
             \${RESUME_ARG}
 
         echo ''
