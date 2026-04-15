@@ -199,10 +199,26 @@ def main(args):
     if not first_preds:
         raise RuntimeError("First chunk has no predictions with features")
 
-    teacher_layer_names, teacher_channels = select_teacher_layers(
-        first_preds[0].features, num_scales=3
-    )
-    print(f"Selected teacher layers: {teacher_layer_names}")
+    available_features = first_preds[0].features
+
+    if args.teacher_layers:
+        # User explicitly specified which teacher layers to use
+        missing = [l for l in args.teacher_layers if l not in available_features]
+        if missing:
+            available = list(available_features.keys())
+            raise ValueError(
+                f"Requested teacher layers not found in predictions: {missing}\n"
+                f"Available layers: {available}"
+            )
+        teacher_layer_names = args.teacher_layers
+        teacher_channels = [available_features[name].shape[0] for name in teacher_layer_names]
+        print(f"Using user-specified teacher layers: {teacher_layer_names}")
+    else:
+        teacher_layer_names, teacher_channels = select_teacher_layers(
+            available_features, num_scales=3
+        )
+        print(f"Auto-selected teacher layers: {teacher_layer_names}")
+
     print(f"Teacher channels: {teacher_channels}")
     del first_preds
 
@@ -495,6 +511,12 @@ if __name__ == "__main__":
                         help="Root directory for images")
     parser.add_argument("--img-size", type=int, default=640,
                         help="Input image size")
+
+    # Teacher layer selection
+    parser.add_argument("--teacher-layers", type=str, nargs="+", default=None,
+                        help="Explicit teacher layer names to use for distillation "
+                             "(e.g. model.4 model.6). If omitted, auto-selects the "
+                             "last N deepest layers.")
 
     # Student architecture
     parser.add_argument("--base-channels", type=int, default=32,
