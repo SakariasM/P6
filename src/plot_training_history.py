@@ -1,14 +1,20 @@
 """
 Plot training curves from training_history.json.
 
-Default view shows the most useful metrics: val IoU/Dice and val total loss.
-Use flags to add individual loss components or training losses.
-
-Usage:
+Single model:
     python src/plot_training_history.py
     python src/plot_training_history.py --history trained_models/training_history.json
-    python src/plot_training_history.py --all-losses
-    python src/plot_training_history.py --train-losses --log-scale
+    python src/plot_training_history.py --all-losses --weight-change 9.5
+
+Compare ablation configs (overlay all models on one graph):
+    python src/plot_training_history.py --compare \
+        --ablation-dir trained_models/ablation \
+        --configs configs/ablation_configs.json
+
+    python src/plot_training_history.py --compare \
+        --ablation-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
+        --configs configs/ablation_configs.json \
+        --output trained_models/ablation_curves.png
 """
 import argparse
 import json
@@ -47,7 +53,10 @@ def get_key(entry: dict, key: str, prefix: str = "") -> float:
     return entry.get(key, 0.0)
 
 
-def plot(history: list[dict], output: Path, args):
+# ---------------------------------------------------------------------------
+# Single-model plot
+# ---------------------------------------------------------------------------
+def plot_single(history: list[dict], output: Path, args):
     use_val = has_val(history)
     prefix = "train" if use_val else ""
     epochs = [e["epoch"] for e in history]
@@ -55,7 +64,6 @@ def plot(history: list[dict], output: Path, args):
     has_iou = any(e.get("val_iou", 0) > 0 for e in history)
     has_seg = any(get_key(e, "segmentation", prefix) > 0 for e in history)
 
-    # Determine layout based on what to show
     panels = []
     if has_iou:
         panels.append("iou")
@@ -126,6 +134,14 @@ def plot(history: list[dict], output: Path, args):
             ax.set_title("Learning Rate Schedule")
             ax.grid(True, alpha=0.3)
 
+        if args.weight_change:
+            for wc in args.weight_change:
+                ax.axvline(x=wc, color="red", linestyle="--", linewidth=1, alpha=0.7)
+                if panel == panels[0]:
+                    ax.text(wc + 0.15, ax.get_ylim()[1] * 0.95,
+                            "weight change", fontsize=7, color="red",
+                            va="top")
+
         ax.set_xlabel("Epoch")
 
     plt.tight_layout()
@@ -134,16 +150,153 @@ def plot(history: list[dict], output: Path, args):
     plt.close(fig)
 
 
+# ---------------------------------------------------------------------------
+# Multi-model comparison plot
+# ---------------------------------------------------------------------------
+def plot_compare(ablation_dir: Path, configs_path: Path, output: Path, args):
+    with open(configs_path) as f:
+        configs = json.load(f)
+
+    # Collect all histories
+    model_data = {}
+    for name, cfg in configs.items():
+        history_path = ablation_dir / name / "training_history.json"
+        if not history_path.exists():
+            print(f"  {name}: no data yet, skipping")
+            continue
+        history = load_history(history_path)
+        if not history:
+            continue
+        layers_short = "+".join(l.replace("model.", "") for l in cfg["teacher_layers"])
+        model_data[name] = {
+            "history": history,
+            "label": f"{name} ({layers_short})",
+            "layers": cfg["teacher_layers"],
+        }
+
+    if not model_data:
+        print("No training data found for any config.")
+        return
+
+    print(f"Found data for {len(model_data)}/{len(configs)} configs")
+
+    # Check which metrics are available
+    any_iou = any(
+        any(e.get("val_iou", 0) > 0 for e in d["history"])
+        for d in model_data.values()
+    )
+    any_val = any(has_val(d["history"]) for d in model_data.values())
+
+    # Determine panels
+    panels = []
+    if any_iou:
+        panels.append("iou")
+        panels.append("dice")
+    if any_val:
+        panels.append("val_total")
+        panels.append("val_seg")
+
+    if not panels:
+        panels = ["train_total"]
+
+    fig, axes = plt.subplots(len(panels), 1, figsize=(14, 4 * len(panels)))
+    if len(panels) == 1:
+        axes = [axes]
+
+    # Use a colormap with enough distinct colors
+    colors = plt.cm.tab10.colors
+    if len(model_data) > 10:
+        colors = plt.cm.tab20.colors
+
+    for ax, panel in zip(axes, panels):
+        for i, (name, data) in enumerate(model_data.items()):
+            history = data["history"]
+            label = data["label"]
+            color = colors[i % len(colors)]
+            epochs = [e["epoch"] for e in history]
+
+            if panel == "iou":
+                vals = [e.get("val_iou", 0.0) for e in history]
+                if any(v > 0 for v in vals):
+                    ax.plot(epochs, vals, marker="o", markersize=3,
+                            color=color, label=label)
+                ax.set_ylabel("IoU")
+                ax.set_title("Validation IoU by Configuration")
+
+            elif panel == "dice":
+                vals = [e.get("val_dice", 0.0) for e in history]
+                if any(v > 0 for v in vals):
+                    ax.plot(epochs, vals, marker="o", markersize=3,
+                            color=color, label=label)
+                ax.set_ylabel("Dice")
+                ax.set_title("Validation Dice by Configuration")
+
+            elif panel == "val_total":
+                use_val = has_val(history)
+                key = "val" if use_val else ""
+                vals = [get_key(e, "total", key) for e in history]
+                ax.plot(epochs, vals, marker="o", markersize=3,
+                        color=color, label=label)
+                ax.set_ylabel("Loss")
+                ax.set_title("Validation Total Loss by Configuration")
+
+            elif panel == "val_seg":
+                use_val = has_val(history)
+                key = "val" if use_val else ""
+                vals = [get_key(e, "segmentation", key) for e in history]
+                if any(v > 0 for v in vals):
+                    ax.plot(epochs, vals, marker="o", markersize=3,
+                            color=color, label=label)
+                ax.set_ylabel("Loss")
+                ax.set_title("Validation Segmentation Loss by Configuration")
+
+            elif panel == "train_total":
+                prefix = "train" if has_val(history) else ""
+                vals = [get_key(e, "total", prefix) for e in history]
+                ax.plot(epochs, vals, marker="o", markersize=3,
+                        color=color, label=label)
+                ax.set_ylabel("Loss")
+                ax.set_title("Training Total Loss by Configuration")
+
+        ax.legend(fontsize=7, loc="best")
+        ax.grid(True, alpha=0.3)
+        ax.set_xlabel("Epoch")
+        if args.log_scale:
+            ax.set_yscale("log")
+
+    plt.tight_layout()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=150)
+    plt.close(fig)
+    print(f"Saved comparison plot to {output}")
+
+    # Print summary table
+    print(f"\n{'Config':<22} {'Epochs':>6} {'Best IoU':>9} {'Best Dice':>10} {'Best Val Loss':>14}")
+    print("-" * 65)
+    for name, data in model_data.items():
+        history = data["history"]
+        n_epochs = len(history)
+        iou_vals = [e.get("val_iou", 0.0) for e in history]
+        dice_vals = [e.get("val_dice", 0.0) for e in history]
+        best_iou = max(iou_vals) if any(v > 0 for v in iou_vals) else 0.0
+        best_dice = max(dice_vals) if any(v > 0 for v in dice_vals) else 0.0
+        use_val = has_val(history)
+        key = "val" if use_val else ""
+        best_loss = min(get_key(e, "total", key) for e in history)
+        iou_str = f"{best_iou:.4f}" if best_iou > 0 else "N/A"
+        dice_str = f"{best_dice:.4f}" if best_dice > 0 else "N/A"
+        print(f"{name:<22} {n_epochs:>6} {iou_str:>9} {dice_str:>10} {best_loss:>14.4f}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot training curves.")
     parser.add_argument(
         "--history", type=Path,
         default=Path("trained_models/training_history.json"),
-        help="Path to training_history.json",
+        help="Path to training_history.json (single-model mode)",
     )
     parser.add_argument(
-        "--output", type=Path,
-        default=Path("trained_models/loss_curves.png"),
+        "--output", type=Path, default=None,
         help="Output image path (.png, .pdf, .svg)",
     )
     parser.add_argument("--log-scale", action="store_true",
@@ -152,27 +305,47 @@ def main():
                         help="Show all individual loss components, LR schedule")
     parser.add_argument("--train-losses", action="store_true",
                         help="Add training loss panel")
+    parser.add_argument("--weight-change", type=float, nargs="+", default=None,
+                        metavar="EPOCH",
+                        help="Mark epoch(s) where loss weights changed "
+                             "(draws vertical line, e.g. --weight-change 9.5)")
+
+    # Compare mode
+    parser.add_argument("--compare", action="store_true",
+                        help="Compare multiple ablation configs on one graph")
+    parser.add_argument("--ablation-dir", type=Path,
+                        default=Path("trained_models/ablation"),
+                        help="Base directory with ablation subdirectories")
+    parser.add_argument("--configs", type=Path,
+                        default=Path("configs/ablation_configs.json"),
+                        help="Path to ablation_configs.json")
+
     args = parser.parse_args()
 
-    if not args.history.exists():
-        raise FileNotFoundError(f"History file not found: {args.history}")
+    if args.compare:
+        output = args.output or Path("trained_models/ablation_curves.png")
+        plot_compare(args.ablation_dir, args.configs, output, args)
+    else:
+        output = args.output or Path("trained_models/loss_curves.png")
+        if not args.history.exists():
+            raise FileNotFoundError(f"History file not found: {args.history}")
 
-    history = load_history(args.history)
-    plot(history, args.output, args)
+        history = load_history(args.history)
+        plot_single(history, output, args)
 
-    final = history[-1]
-    use_val = has_val(history)
-    prefix = "train" if use_val else ""
+        final = history[-1]
+        use_val = has_val(history)
+        prefix = "train" if use_val else ""
 
-    print(f"Saved plot to {args.output}")
-    print(f"Latest epoch ({final['epoch']}):")
-    if final.get("val_iou"):
-        print(f"  Val IoU: {final['val_iou']:.4f}  Dice: {final['val_dice']:.4f}")
-    if use_val:
-        print(f"  Val   — total={get_key(final, 'total', 'val'):.4f}"
-              f"  seg={get_key(final, 'segmentation', 'val'):.4f}")
-    print(f"  Train — total={get_key(final, 'total', prefix):.4f}"
-          f"  seg={get_key(final, 'segmentation', prefix):.4f}")
+        print(f"Saved plot to {output}")
+        print(f"Latest epoch ({final['epoch']}):")
+        if final.get("val_iou"):
+            print(f"  Val IoU: {final['val_iou']:.4f}  Dice: {final['val_dice']:.4f}")
+        if use_val:
+            print(f"  Val   — total={get_key(final, 'total', 'val'):.4f}"
+                  f"  seg={get_key(final, 'segmentation', 'val'):.4f}")
+        print(f"  Train — total={get_key(final, 'total', prefix):.4f}"
+              f"  seg={get_key(final, 'segmentation', prefix):.4f}")
 
 
 if __name__ == "__main__":
