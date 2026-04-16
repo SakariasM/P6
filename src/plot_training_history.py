@@ -8,12 +8,10 @@ Single model:
 
 Compare ablation configs (overlay all models on one graph):
     python src/plot_training_history.py --compare \
-        --ablation-dir trained_models/ablation \
-        --configs configs/ablation_configs.json
+        --ablation-dir trained_models/ablation
 
     python src/plot_training_history.py --compare \
         --ablation-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
-        --configs configs/ablation_configs.json \
         --output trained_models/ablation_curves.png
 """
 import argparse
@@ -153,32 +151,28 @@ def plot_single(history: list[dict], output: Path, args):
 # ---------------------------------------------------------------------------
 # Multi-model comparison plot
 # ---------------------------------------------------------------------------
-def plot_compare(ablation_dir: Path, configs_path: Path, output: Path, args):
-    with open(configs_path) as f:
-        configs = json.load(f)
-
-    # Collect all histories
+def plot_compare(ablation_dir: Path, output: Path, args):
+    # Scan subdirectories for training_history.json
     model_data = {}
-    for name, cfg in configs.items():
-        history_path = ablation_dir / name / "training_history.json"
+    for subdir in sorted(ablation_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+        history_path = subdir / "training_history.json"
         if not history_path.exists():
-            print(f"  {name}: no data yet, skipping")
             continue
         history = load_history(history_path)
         if not history:
             continue
-        layers_short = "+".join(l.replace("model.", "") for l in cfg["teacher_layers"])
-        model_data[name] = {
+        model_data[subdir.name] = {
             "history": history,
-            "label": f"{name} ({layers_short})",
-            "layers": cfg["teacher_layers"],
+            "label": subdir.name,
         }
 
     if not model_data:
-        print("No training data found for any config.")
+        print(f"No training_history.json found in subdirectories of {ablation_dir}")
         return
 
-    print(f"Found data for {len(model_data)}/{len(configs)} configs")
+    print(f"Found data for {len(model_data)} configs: {', '.join(model_data.keys())}")
 
     # Check which metrics are available
     any_iou = any(
@@ -316,15 +310,12 @@ def main():
     parser.add_argument("--ablation-dir", type=Path,
                         default=Path("trained_models/ablation"),
                         help="Base directory with ablation subdirectories")
-    parser.add_argument("--configs", type=Path,
-                        default=Path("configs/ablation_configs.json"),
-                        help="Path to ablation_configs.json")
 
     args = parser.parse_args()
 
     if args.compare:
         output = args.output or Path("trained_models/ablation_curves.png")
-        plot_compare(args.ablation_dir, args.configs, output, args)
+        plot_compare(args.ablation_dir, output, args)
     else:
         output = args.output or Path("trained_models/loss_curves.png")
         if not args.history.exists():
