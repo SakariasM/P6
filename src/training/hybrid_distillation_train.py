@@ -314,11 +314,18 @@ def main(args):
             raise ValueError("All teacher layers were excluded — nothing left to train on")
         print(f"Excluded teacher layers: {args.exclude_layers}")
 
-    teacher_layer_names, teacher_channels = select_teacher_layers(
-        available_features,
-        num_scales=len(available_features),
-        explicit_layers=args.teacher_layers,
-    )
+    if args.teacher_layers or args.exclude_layers:
+        # User explicitly chose layers — use all remaining
+        teacher_layer_names, teacher_channels = select_teacher_layers(
+            available_features,
+            num_scales=len(available_features),
+            explicit_layers=args.teacher_layers,
+        )
+    else:
+        # Default: last 3 layers
+        teacher_layer_names, teacher_channels = select_teacher_layers(
+            available_features,
+        )
     print(f"Selected teacher layers: {teacher_layer_names}")
 
     print(f"Teacher channels: {teacher_channels}")
