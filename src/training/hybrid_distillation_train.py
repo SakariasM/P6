@@ -308,19 +308,18 @@ def main(args):
         unknown = [l for l in args.exclude_layers if l not in available_features]
         if unknown:
             print(f"Warning: --exclude-layers contains unknown layers: {unknown}")
-        filtered = {k: v for k, v in available_features.items()
-                    if k not in args.exclude_layers}
-        if not filtered:
+        available_features = {k: v for k, v in available_features.items()
+                              if k not in args.exclude_layers}
+        if not available_features:
             raise ValueError("All teacher layers were excluded — nothing left to train on")
         print(f"Excluded teacher layers: {args.exclude_layers}")
-        teacher_layer_names, teacher_channels = select_teacher_layers(
-            filtered, num_scales=len(filtered)
-        )
-    else:
-        teacher_layer_names, teacher_channels = select_teacher_layers(
-            available_features, num_scales=len(available_features)
-        )
-    print(f"Using teacher layers: {teacher_layer_names}")
+
+    teacher_layer_names, teacher_channels = select_teacher_layers(
+        available_features,
+        num_scales=len(available_features),
+        explicit_layers=args.teacher_layers,
+    )
+    print(f"Selected teacher layers: {teacher_layer_names}")
 
     print(f"Teacher channels: {teacher_channels}")
     del first_preds
