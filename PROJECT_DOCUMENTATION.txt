@@ -950,13 +950,27 @@ STEP 5: Re-submit if the SLURM time limit expires (auto-resume).
 
 STEP 6: Compare results across all configs.
 
-  python src/compare_ablations.py \
-    --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
-    --configs configs/ablation_configs.json \
-    --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png
+  Run on the server with srun:
+  srun --gres=gpu:0 --mem=8G --cpus-per-task=2 \
+    singularity exec \
+      -B ~/kd_venv:/scratch/venv \
+      -B "$PWD":/scratch/project \
+      -B /ceph/project/P6-Machine-Vision/P6:/ceph/project/P6-Machine-Vision/P6 \
+      /ceph/container/pytorch/pytorch_25.12.sif \
+      /bin/bash -c "
+        source /scratch/venv/bin/activate
+        cd /scratch/project
+        python src/compare_ablations.py \
+          --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
+          --configs configs/ablation_configs.json \
+          --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png
+      "
 
-  This prints a table of best validation losses per config and saves an
-  overlay plot comparing loss curves.
+  Transfer the plot to your local machine:
+  scp ailab-vpn:/ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png ~/Dokumenter/GitHub/P6/
+
+  This prints a table of best IoU, Dice, and validation losses per config
+  and saves an overlay plot comparing IoU, Dice, and loss curves.
 
 11.5 Commands Reference (Quick Copy-Paste)
 ------------------------------------------
@@ -982,10 +996,19 @@ CONFIG=deep_plus_neck sbatch slurm/train_ablation.slurm   # model.9+12+15
 CONFIG=backbone_plus_neck1 sbatch slurm/train_ablation.slurm  # model.4+6+9+12
 CONFIG=backbone_plus_neck2 sbatch slurm/train_ablation.slurm  # model.4+6+9+15
 
-# Compare results
-python src/compare_ablations.py \
-  --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
-  --configs configs/ablation_configs.json
+# Compare results (run via srun on server)
+srun --gres=gpu:0 --mem=8G --cpus-per-task=2 singularity exec \
+  -B ~/kd_venv:/scratch/venv -B "$PWD":/scratch/project \
+  -B /ceph/project/P6-Machine-Vision/P6:/ceph/project/P6-Machine-Vision/P6 \
+  /ceph/container/pytorch/pytorch_25.12.sif /bin/bash -c "
+    source /scratch/venv/bin/activate && cd /scratch/project && \
+    python src/compare_ablations.py \
+      --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
+      --configs configs/ablation_configs.json \
+      --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png"
+
+# Transfer plot to local machine
+scp ailab-vpn:/ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png ~/Dokumenter/GitHub/P6/
 
 # Override defaults (optional)
 EPOCHS=30 BATCH_SIZE=16 CONFIG=backbone_3 sbatch slurm/train_ablation.slurm
