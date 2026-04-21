@@ -1,8 +1,17 @@
-numpy
-opencv-python
-matplotlib
 torch
-diffusers==0.30.0
-transformers==4.45.0
+torchvision
+numpy
+matplotlib
+openpyxl
+jupyter
+dgenerate-ultralytics-headless
+tqdm
 pillow
+pytest
+# Distillation — YOLO teacher
+pyyaml
+tensorboard
+# Inpainting pipeline
+diffusers
+transformers
 accelerate

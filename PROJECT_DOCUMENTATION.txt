@@ -1,0 +1,1120 @@
+================================================================================
+P6 PROJECT DOCUMENTATION
+Knowledge Distillation for Person Instance Segmentation on Raspberry Pi 5
+================================================================================
+
+1. PROJECT OVERVIEW
+================================================================================
+
+This project implements offline knowledge distillation to train a lightweight
+student model for person instance segmentation. The goal is to take the
+knowledge from a large, accurate teacher model (YOLO26n-seg, 2.7M parameters)
+and compress it into an even smaller student model (U-Net, ~1.45M parameters)
+that can run in real-time on a Raspberry Pi 5.
+
+Knowledge distillation works in two phases:
+  Phase 1 (Extraction): Run the teacher model on a large image dataset and save
+    its intermediate feature maps, detections, and segmentation masks to disk.
+  Phase 2 (Training): Train the student model using the saved teacher features
+    as supervision signals, without needing the teacher model present.
+
+This "offline" approach means the teacher only runs once during extraction, and
+the student can be trained repeatedly without GPU-heavy teacher inference.
+
+The dataset used is Open Images V7, filtered for images containing people.
+Training runs on the AAU AI-LAB HPC cluster using NVIDIA L4 GPUs via SLURM
+job scheduling and Singularity containers.
+
+
+2. PROJECT STRUCTURE
+================================================================================
+
+P6/
+|
+|-- src/                          Core source code
+|   |-- __init__.py
+|   |-- download_openimages_person.py   Dataset download script
+|   |
+|   |-- teacher/                  Teacher model and feature extraction
+|   |   |-- __init__.py
+|   |   |-- predictions.py        Basic teacher prediction capture
+|   |   |-- hybrid_predictions.py Enhanced prediction capture with features
+|   |   |-- feature_extractor.py  Hook-based intermediate feature extraction
+|   |   |-- merge_predictions.py  Merge chunked extraction outputs
+|   |
+|   |-- student/                  Student model architecture
+|   |   |-- __init__.py
+|   |   |-- student_model.py      U-Net segmentation model with CBAM
+|   |   |-- attention.py          CBAM attention and projection modules
+|   |
+|   |-- training/                 Training pipeline
+|   |   |-- __init__.py
+|   |   |-- distillation_loss.py  Four-component distillation loss
+|   |   |-- hybrid_distillation_train.py  Main training script
+|   |
+|   |-- utils/                    Utility modules
+|   |   |-- __init__.py
+|   |   |-- data_loader.py
+|   |   |-- download_dataset.py
+|   |
+|   |-- export_model.py           Export to ONNX and TFLite formats
+|   |-- benchmark_model.py        Benchmark params, FLOPs, inference speed
+|   |-- run_inference.py          Demo inference (image, video, webcam)
+|   |-- compare_ablations.py      Compare ablation results (table + plot)
+|   |-- backfill_val_metrics.py   Retroactively compute val metrics for old checkpoints
+|   |-- plot_training_history.py  Plot training curves (IoU/Dice, losses, LR)
+|   |
+|   |-- legacy/                   Old/deprecated code
+|       |-- __init__.py
+|       |-- main.py
+|       |-- tester.py
+|
+|-- configs/                      Configuration files
+|   |-- ablation_configs.json     Layer ablation experiment definitions (10 configs)
+|
+|-- slurm/                        HPC cluster job scripts
+|   |-- setup_env.sh              One-time environment setup
+|   |-- extract_teacher.slurm     Phase 1: teacher feature extraction (3 layers)
+|   |-- extract_all_layers.slurm  Phase 1: extraction with all 5 layers (for ablation)
+|   |-- train_student.slurm       Phase 2: student training (default config)
+|   |-- train_ablation.slurm      Phase 2: ablation training (config-driven)
+|   |-- backfill_val.slurm        Backfill validation metrics for old checkpoints
+|   |-- full_pipeline.slurm       Combined pipeline (legacy)
+|   |-- run_tests.slurm           Run test suite on cluster
+|
+|-- tests/                        Test suite
+|   |-- conftest.py               Pytest configuration
+|   |-- test_attention.py         CBAM module tests
+|   |-- test_student_model.py     Student architecture tests
+|   |-- test_distillation_loss.py Loss function tests
+|   |-- test_training_integration.py  Training helper tests
+|   |-- test_integration.py       End-to-end training loop tests
+|   |-- test_feature_extractor.py Feature hook tests
+|   |-- test_teacher_layer_selection.py  Explicit layer selection + ablation tests
+|   |-- test_cluster_env.py       Cluster environment tests
+|   |-- test_gpu_readiness.py     GPU availability tests
+|
+|-- data/                         Dataset (gitignored)
+|   |-- dataset.py
+|   |-- open-images-v7/           Downloaded Open Images data
+|
+|-- results/                      Extraction outputs
+|   |-- hybrid_predictions/       Teacher feature chunks, 3 layers (.torch files)
+|   |-- ablation_predictions/     Teacher feature chunks, all 5 layers (for ablation)
+|   |-- metadata.json
+|   |-- teacher_predictions.json
+|   |-- teacher_predictions.pickle
+|
+|-- trained_models/               Training outputs (on cluster)
+|   |-- best_model.pt             Best loss checkpoint (default training)
+|   |-- checkpoint_epoch_N.pt     Periodic checkpoints
+|   |-- checkpoint_mid_epoch.pt   Mid-epoch resume checkpoint
+|   |-- training_history.json     Per-epoch loss metrics
+|   |-- final_model.pt            Last epoch state dict
+|   |-- student_seg_320.onnx      Exported ONNX model (320x320)
+|   |-- student_seg_640.onnx      Exported ONNX model (640x640)
+|   |-- ablation/                 Ablation experiment outputs
+|       |-- shallow_only/         One subdirectory per config, each containing:
+|       |   |-- best_model.pt       best_model.pt, checkpoint_epoch_N.pt,
+|       |   |-- training_history.json   training_history.json, etc.
+|       |-- backbone_3/
+|       |-- deep_plus_neck/
+|       |-- ...                   (10 configs total)
+|
+|-- yolo_distillation/            Reference implementation (read-only)
+|                                 Original online inpainting distillation code
+|                                 that was ported into src/ for offline use
+|
+|-- requirements.txt
+|-- README.md
+|-- .gitignore
+
+
+3. PHASE 1: TEACHER FEATURE EXTRACTION
+================================================================================
+
+The teacher is YOLO26n-seg, a YOLO-family model trained for instance
+segmentation. It has ~2.7M parameters and produces accurate person detections
+and segmentation masks.
+
+3.1 Feature Extractor (src/teacher/feature_extractor.py)
+---------------------------------------------------------
+The YOLOFeatureExtractor class uses PyTorch forward hooks to capture
+intermediate feature maps during the teacher's forward pass. Forward hooks are
+callback functions registered on specific layers that intercept the layer's
+output tensor without modifying it.
+
+The FeatureHook class:
+  - Registers a hook on a given nn.Module layer
+  - When the layer executes during forward(), the hook stores the output tensor
+  - The tensor is detached from the computation graph (no gradients needed)
+  - Hooks are registered on YOLO backbone layers at indices [4, 6, 9, 12, 15]
+
+These indices correspond to feature maps at different spatial resolutions:
+  model.4:  128 channels, 80x80   (fine detail, large spatial)
+  model.6:  128 channels, 40x40
+  model.9:  256 channels, 20x20
+  model.12: 384 channels, 40x40
+  model.15: 256 channels, 80x80   (coarse features, large spatial)
+
+3.2 Hybrid Predictions (src/teacher/hybrid_predictions.py)
+----------------------------------------------------------
+The HybridTeacherPrediction dataclass stores everything the teacher produces
+for a single image:
+
+  - image_path: Path to the original image file
+  - boxes: Normalized bounding boxes [x1, y1, x2, y2] in [0,1]
+  - confidences: Detection confidence scores
+  - class_ids: Predicted class (filtered for class 0 = person)
+  - class_probs: Class probability distributions
+  - image_shape: Original image dimensions (H, W, C)
+  - features: Dict mapping layer names to feature tensors
+      {"model.4": tensor[128,80,80], "model.6": tensor[128,40,40], ...}
+  - raw_logits: Raw detection head output before NMS
+  - masks: Segmentation mask polygon vertices per detection
+  - segmentation_mask: Merged binary person mask [H, W] (uint8, 0 or 1)
+      Built by rasterizing all instance polygon masks via cv2.fillPoly and
+      merging them into a single binary mask. Used as pseudo ground truth
+      for the segmentation loss during training.
+
+The HybridYOLOInference class orchestrates extraction:
+  1. Runs YOLO inference with half precision (FP16) on GPU
+  2. Filters detections for person class only
+  3. Extracts intermediate features via the hook system
+  4. Saves results in chunks (default 500 images per chunk) to avoid OOM
+  5. Supports parallel extraction with worker sharding
+
+3.3 SLURM Extraction Job (slurm/extract_teacher.slurm)
+-------------------------------------------------------
+Runs as a SLURM array job with 4 workers. Each worker processes 1/4 of the
+dataset in parallel on separate GPUs. Output is chunked .torch files:
+
+  results/hybrid_predictions/
+    chunk_0000_worker0.torch    (~400-500 predictions each)
+    chunk_0001_worker0.torch
+    ...
+    chunk_0000_worker1.torch
+    ...
+
+After extraction completes, chunks can optionally be merged using
+merge_predictions.py. However, the training script directly reads individual
+chunk files, so merging is not required.
+
+3.4 Basic Predictions (src/teacher/predictions.py)
+---------------------------------------------------
+An earlier, simpler prediction system that captures only detection outputs
+(boxes, confidences, classes) without intermediate features. The
+TeacherPrediction dataclass and YOLOTeacherInference class support JSON,
+pickle, and npz output formats. This is the predecessor to the hybrid system
+and is retained for backwards compatibility.
+
+
+4. PHASE 2: STUDENT TRAINING
+================================================================================
+
+4.1 Student Model (src/student/student_model.py)
+-------------------------------------------------
+The student is a U-Net encoder-decoder architecture designed for binary person
+segmentation. It takes an RGB image and outputs a single-channel sigmoid mask.
+
+Architecture (with default base_channels=8, depth=4):
+
+  INPUT [B, 3, H, W]
+    |
+    v
+  Initial Conv: 7x7 convolution, no downsampling
+    -> [B, 8, H, W]
+    |
+  ENCODER (4 levels, each halves spatial resolution):
+    |
+    enc[0]: DownBlock(8 -> 16)   + CBAM -> [B, 16,  H/2,  W/2]
+    enc[1]: DownBlock(16 -> 32)  + CBAM -> [B, 32,  H/4,  W/4]
+    enc[2]: DownBlock(32 -> 64)  + CBAM -> [B, 64,  H/8,  W/8]
+    enc[3]: DownBlock(64 -> 128) + CBAM -> [B, 128, H/16, W/16]
+    |
+  BOTTLENECK: 3 dilated ResBlocks at 128 channels
+    Dilations: [1, 2, 1] — expands receptive field without downsampling
+    |
+  DECODER (4 levels, each doubles spatial resolution):
+    |
+    dec[0]: UpBlock(128+64=192 -> 64)  with skip from enc[2]
+    dec[1]: UpBlock(64+32=96 -> 32)    with skip from enc[1]
+    dec[2]: UpBlock(32+16=48 -> 16)    with skip from enc[0]
+    dec[3]: UpBlock(16+8=24 -> 8)      with skip from initial
+    |
+  OUTPUT HEAD: 3x3 conv -> 1x1 conv -> Sigmoid
+    -> [B, 1, H, W]  (person segmentation mask, values in [0,1])
+
+Building blocks:
+  - DownBlock: stride-2 conv -> BN -> LeakyReLU -> conv -> BN -> LeakyReLU
+  - UpBlock: bilinear upsample 2x -> concatenate skip -> conv -> BN -> ReLU -> conv -> BN -> ReLU
+  - ResBlock: conv (with optional dilation) -> BN -> ReLU -> conv -> BN + residual
+
+The forward pass returns two things:
+  1. output: The segmentation mask [B, 1, H, W]
+  2. distill_info: A dictionary used only during training:
+     - "features": Raw encoder feature maps at the last N levels
+     - "attention_maps": CBAM spatial attention maps at those levels
+     - "projected": Features mapped to teacher channel dimensions
+
+At inference time (Raspberry Pi), only the output mask is used. The
+distill_info is ignored and adds zero overhead.
+
+Parameter count: ~1.45M (with base_channels=8, depth=4, teacher_channels=[256,384,256])
+This is smaller than the teacher (2.4M), which is the goal of distillation.
+
+4.2 CBAM Attention (src/student/attention.py)
+---------------------------------------------
+CBAM (Convolutional Block Attention Module) is applied at every encoder stage.
+It learns to focus on the most informative channels and spatial locations.
+
+Channel Attention:
+  1. Global average pool + global max pool -> two [B, C, 1, 1] vectors
+  2. Shared FC network (C -> C/16 -> C) processes both
+  3. Sum + sigmoid -> channel gate [B, C, 1, 1]
+  4. Multiply gate with input -> reweighted features
+
+Spatial Attention:
+  1. Average across channels + max across channels -> [B, 2, H, W]
+  2. 7x7 convolution -> sigmoid -> spatial attention map [B, 1, H, W]
+  3. Multiply map with input -> spatially reweighted features
+
+The spatial attention map is the key signal for distillation — it represents
+"where the student is looking" at each encoder level. These maps are compared
+against the teacher's attention patterns during training.
+
+AttentionProjection:
+  A 1x1 convolution + BatchNorm + ReLU that maps student feature channels into
+  the teacher's channel space. For example, if the student has 32 channels at
+  some level but the teacher has 256, the projection learns a linear mapping
+  32 -> 256 so the loss functions can compare them directly. It also handles
+  spatial size mismatches via bilinear interpolation.
+
+4.3 Distillation Losses (src/training/distillation_loss.py)
+-----------------------------------------------------------
+Four complementary losses teach different aspects of the teacher's knowledge:
+
+ATTENTION TRANSFER LOSS (AttentionTransferLoss):
+  Compares student CBAM spatial attention maps against teacher attention maps.
+  Teacher attention is computed on-the-fly from stored features:
+    att = mean(|features|, dim=channels) -> min-max normalize to [0,1]
+  Loss: MSE between student and teacher attention maps at each scale.
+  Purpose: Teaches the student WHERE to focus spatially.
+
+FEATURE MIMICRY LOSS (FeatureMimicryLoss):
+  Compares projected student features directly against teacher features.
+  The student features are first mapped through AttentionProjection to match
+  the teacher's channel count.
+  Loss: MSE between projected student features and teacher features.
+  Purpose: Teaches the student WHAT to represent at each feature level.
+
+RELATION DISTILLATION LOSS (RelationDistillationLoss):
+  Compares Gram matrices (second-order feature statistics) between student and
+  teacher. The Gram matrix G = F * F^T / (H*W) captures correlations between
+  feature channels — it encodes texture and style information.
+  Loss: L1 between student and teacher Gram matrices.
+  Purpose: Teaches the student HOW features relate to each other (texture/style).
+
+SEGMENTATION LOSS (SegmentationLoss):
+  Direct pixel-level supervision using the teacher's merged binary person mask
+  as pseudo ground truth. Combines Binary Cross-Entropy and Dice loss.
+  The teacher mask is resized to match the student output resolution.
+  Loss: BCE + Dice (1 - 2*intersection / (sum_student + sum_teacher))
+  Purpose: Teaches the student WHAT to output — gives the decoder a direct
+  training signal for producing correct person masks, rather than only learning
+  from intermediate feature representations.
+
+Combined loss (SegmentationDistillationLoss):
+  total = 1.0 * attention + 2.0 * mimicry + 1.0 * relation + 0.5 * segmentation
+  These weights were tuned so that each loss component contributes meaningfully
+  to the gradient after the Gram normalization fix.
+  All losses handle spatial size mismatches by interpolating to match dimensions.
+  Teacher features are detached (no gradients flow through them).
+
+Validation metrics:
+  In addition to loss values, validation computes IoU and Dice scores by
+  thresholding the student mask at 0.5 and comparing against the teacher mask.
+  Early stopping tracks val_iou (not val_total) since IoU directly measures
+  mask quality and is stable across loss weight changes.
+
+4.4 Training Script (src/training/hybrid_distillation_train.py)
+---------------------------------------------------------------
+The central training loop implements chunk-epoch training:
+
+  For each epoch:
+    1. Seed a random shuffle of chunk files (deterministic per epoch for
+       reproducible resume)
+    2. For each chunk file:
+       a. torch.load() the chunk -> list of HybridTeacherPrediction objects
+       b. Filter for predictions that have features
+       c. Wrap in ChunkDataset -> DataLoader
+       d. For each batch:
+          - Load original images from disk (resized to target size)
+          - Apply data augmentation if enabled (color jitter + random flip)
+          - Extract pre-stored teacher features as ordered list
+          - Cast teacher features from float16 to float32
+          - Load teacher segmentation mask (if available)
+          - Compute teacher attention maps on-the-fly
+          - Student forward pass -> segmentation mask + distillation info
+          - Compute combined distillation loss (incl. segmentation loss)
+          - Backpropagation + AdamW optimizer step
+          - Optional gradient clipping
+       e. Delete chunk from RAM, empty CUDA cache
+       f. Save mid-epoch checkpoint every 50 chunks
+    3. Step the cosine annealing learning rate scheduler
+    4. Save epoch checkpoint, best model, training history
+    5. Clean up mid-epoch checkpoint file
+
+Key design decisions:
+  - Chunk-epoch loading: Only one chunk (~400 predictions) is in memory at a
+    time, preventing OOM on the full dataset.
+  - Seeded shuffle: Each epoch shuffles chunks with seed=epoch_number, so
+    resuming mid-epoch reproduces the exact same chunk order.
+  - Mid-epoch checkpointing: Saves every 50 chunks so that SLURM time limit
+    kills only lose ~50 chunks of progress instead of an entire epoch.
+  - Teacher features stored as float16 (from extraction with half=True) are
+    cast to float32 at training time to avoid dtype mismatch errors.
+
+Helper functions:
+  - select_teacher_layers(): By default, picks the last N layers by index from
+    the feature dict. Accepts an optional explicit_layers parameter to override
+    auto-selection (used by the ablation study). For the current default
+    extraction, this selects model.9, model.12, model.15 with channels
+    [256, 384, 256].
+  - compute_teacher_attention(): Converts raw feature maps to spatial attention
+    maps via mean(|activations|) across channels, min-max normalized to [0,1].
+  - discover_chunk_files(): Finds all .torch chunk files in the predictions
+    directory.
+  - ChunkDataset: PyTorch Dataset wrapping one chunk. Loads images from disk,
+    extracts teacher features by layer name, and optionally loads teacher
+    segmentation masks. Supports data augmentation (color jitter + flip).
+  - collate_fn: Custom DataLoader collator that properly stacks the teacher
+    feature lists and masks across the batch dimension.
+
+Data Augmentation (enabled via --augment flag):
+  - ColorJitter: brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05
+    Applied only to images (not teacher features), forcing the student to be
+    robust to color variation while matching the same teacher representations.
+  - Random horizontal flip (50% probability): Applied to images, teacher
+    features, AND teacher segmentation masks simultaneously to maintain
+    spatial consistency.
+
+CLI arguments:
+  --predictions       Path to predictions directory or single file
+  --image-root        Root directory for original images
+  --img-size          Input image size (default 640)
+  --base-channels     Student U-Net base channels (default 32, SLURM default 8)
+  --depth             Number of encoder/decoder levels (default 4)
+  --epochs            Number of training epochs (default 50)
+  --batch-size        Batch size (default 16, SLURM default 8)
+  --lr                Learning rate (default 1e-4)
+  --weight-decay      AdamW weight decay (default 1e-5)
+  --num-workers       DataLoader worker processes (default 4)
+  --grad-clip         Gradient clipping max norm (default 1.0)
+  --attention-weight  Attention transfer loss weight (default 1.0)
+  --mimicry-weight    Feature mimicry loss weight (default 2.0)
+  --relation-weight   Relation distillation loss weight (default 1.0)
+  --seg-weight        Segmentation loss weight (default 0.5)
+  --augment           Enable data augmentation (color jitter + random flip)
+  --output-dir        Where to save checkpoints and models
+  --save-interval     Save epoch checkpoint every N epochs (default 10)
+  --resume            Path to checkpoint for resuming training
+  --reset-best-loss   Reset best_loss on resume (use after changing loss weights)
+  --teacher-layers    Explicit teacher layer names to use (e.g. model.4 model.9).
+                      Default: auto-select last 3 by layer index.
+  --val-split         Fraction of chunks held out for validation (default 0.1)
+  --patience          Early stopping patience — epochs without val IoU improvement.
+                      0 = disabled. (default 5)
+
+4.5 SLURM Training Job (slurm/train_student.slurm)
+---------------------------------------------------
+Submits the training job to the AAU AI-LAB HPC cluster:
+
+  - 1 GPU (NVIDIA L4, 22GB VRAM)
+  - 8 CPU cores, 64GB system RAM
+  - 12-hour time limit
+  - Singularity container with PyTorch
+  - Virtual environment with ultralytics and dependencies
+
+All training hyperparameters are overridable via environment variables:
+  EPOCHS, BATCH_SIZE, LEARNING_RATE, ATTENTION_WEIGHT, MIMICRY_WEIGHT,
+  RELATION_WEIGHT, SEG_WEIGHT, GRAD_CLIP, BASE_CHANNELS, DEPTH, IMG_SIZE,
+  NUM_WORKERS, SAVE_INTERVAL
+
+Data augmentation (--augment) is enabled by default. Loss weights default to
+the rebalanced values (ATT=1.0, MIM=2.0, REL=10.0, SEG=0.5) with grad-clip=1.0.
+
+Auto-resume logic:
+  1. First checks for checkpoint_mid_epoch.pt (mid-epoch resume)
+  2. Then checks for checkpoint_epoch_*.pt files (picks latest)
+  3. If neither exists, starts from scratch
+
+Example usage:
+  sbatch slurm/train_student.slurm
+  EPOCHS=20 IMG_SIZE=320 sbatch slurm/train_student.slurm
+  sbatch --nodelist=ailab-l4-06 slurm/train_student.slurm
+
+Training outputs saved to /ceph/project/P6-Machine-Vision/P6/trained_models/:
+  best_model.pt             Best IoU checkpoint (saved each improving epoch)
+  checkpoint_epoch_N.pt     Periodic checkpoints with full optimizer state
+  checkpoint_mid_epoch.pt   Temporary mid-epoch checkpoint for SLURM resilience
+  training_history.json     Per-epoch loss metrics (updated every epoch)
+  final_model.pt            Last epoch state dict (saved at completion)
+
+
+5. DATA PIPELINE
+================================================================================
+
+5.1 Dataset: Open Images V7 (Person class)
+-------------------------------------------
+Downloaded using src/download_openimages_person.py which uses the FiftyOne
+library to fetch images from Open Images V7 containing people:
+  - Training split: 64,000 images
+  - Validation split: 16,000 images
+
+Images are stored at:
+  data/open-images-v7/train/data/    (on the cluster: /ceph/project/.../data/)
+
+5.2 Data Flow
+-------------
+
+  Open Images images (JPEG files on disk)
+          |
+          v
+    [Phase 1: extract_teacher.slurm]
+    YOLO26n-seg teacher model
+          |
+          |--> features: {"model.4": [128,80,80], ..., "model.15": [256,80,80]}
+          |--> segmentation_mask: merged binary person mask [H, W]
+          |--> segmentation masks (polygon vertices)
+          |--> bounding boxes, confidences, class IDs
+          |
+          v
+    chunk_*.torch files (serialized HybridTeacherPrediction objects)
+    ~288 chunk files, ~400 predictions each, features stored as float16
+          |
+          v
+    [Phase 2: train_student.slurm]
+    hybrid_distillation_train.py
+          |
+          |--> select_teacher_layers() picks last 3: model.9, model.12, model.15
+          |    channels = [256, 384, 256]
+          |
+          |--> StudentSegmentation(teacher_channels=[256, 384, 256], base_channels=8)
+          |    Creates AttentionProjection layers: 32->256, 64->384, 128->256
+          |
+          +--> Training loop:
+                image (+ augmentation) --> student --> seg_output + distill_info
+                                                          |
+                teacher features --> compute_teacher_attention()
+                teacher mask (binary person mask)
+                                                          |
+                                     SegmentationDistillationLoss
+                                     |- attention transfer (spatial maps)
+                                     |- feature mimicry (projected features)
+                                     |- relation distillation (Gram matrices)
+                                     |- segmentation (BCE+Dice vs teacher mask)
+                                                          |
+                                                          v
+                                                     backprop -> update student weights
+          |
+          v
+    Trained student model (best_model.pt, ~6MB)
+          |
+          v
+    [Export: export_model.py]
+    ONNX (~0.25MB) and/or TFLite (~5.35MB)
+          |
+          v
+    [Deployment: Raspberry Pi 5]
+    Load model, run inference on camera frames
+    Input: RGB image -> Output: person segmentation mask
+    Demo: run_inference.py --webcam / --video / --image
+
+
+6. CLUSTER INFRASTRUCTURE
+================================================================================
+
+6.1 AAU AI-LAB HPC Cluster
+---------------------------
+The training runs on Aalborg University's AI-LAB cluster:
+  - Partition: l4 (NVIDIA L4 GPUs, 22GB VRAM each)
+  - Nodes: ailab-l4-01 through ailab-l4-11
+  - Job scheduler: SLURM
+  - Container runtime: Singularity (rootless container execution)
+  - Storage: /ceph/ (shared Ceph filesystem)
+  - Container image: /ceph/container/pytorch/pytorch_25.12.sif
+
+GPUs on this cluster can be shared between jobs (not exclusive by default),
+which means available VRAM may be less than 22GB if another job is on the same
+GPU. This is why the model and batch size were reduced to fit comfortably.
+
+6.2 Environment Setup (slurm/setup_env.sh)
+-------------------------------------------
+Run once after cloning the repo to create a virtual environment inside the
+Singularity container:
+  srun singularity exec /ceph/container/pytorch/pytorch_25.12.sif bash slurm/setup_env.sh
+
+This creates ~/kd_venv with:
+  - PyTorch (inherited from container)
+  - ultralytics (YOLO framework)
+  - tqdm, pillow, pytest, opencv-python-headless
+
+6.3 Useful Commands
+-------------------
+Check node availability:
+  sinfo -p l4 -N -l
+
+Submit training job to a specific node:
+  sbatch --nodelist=ailab-l4-06 slurm/train_student.slurm
+
+Check job status:
+  squeue --me
+
+Cancel a job:
+  scancel <job_id>
+
+View training progress (stderr has tqdm progress bars):
+  tail -f /ceph/project/P6-Machine-Vision/P6/logs/train_<jobid>.err
+
+View training output:
+  cat /ceph/project/P6-Machine-Vision/P6/logs/train_<jobid>.out
+
+Exclude problematic nodes:
+  sbatch --exclude=ailab-l4-04 slurm/train_student.slurm
+
+Inspect chunk data:
+  srun singularity exec --nv -B /ceph/.../P6:/data \
+    /ceph/container/pytorch/pytorch_25.12.sif python3 -c "
+  import sys; sys.path.insert(0, '/data/src')
+  from teacher.hybrid_predictions import HybridTeacherPrediction
+  import torch
+  preds = torch.load('/data/results/hybrid_predictions/chunk_0000_worker0.torch',
+                      weights_only=False)
+  print(f'{len(preds)} predictions, keys: {list(preds[0].features.keys())}')
+  "
+
+
+7. TEST SUITE
+================================================================================
+
+Run all tests: python -m pytest tests/ -v
+
+7.1 test_attention.py (5 tests)
+  Tests for CBAM attention modules:
+  - Channel attention output shapes and gating
+  - Spatial attention output shapes and range [0,1]
+  - Combined CBAM shapes
+  - AttentionProjection channel mapping
+  - AttentionProjection spatial interpolation
+
+7.2 test_student_model.py (8 tests)
+  Tests for the U-Net student model:
+  - Output shape matches input spatial dimensions
+  - Output range is [0,1] (sigmoid)
+  - Distillation info contains expected keys
+  - Correct number of feature scales
+  - Projected channels match teacher channels
+  - Attention maps are single-channel spatial maps in [0,1]
+  - Model is fully differentiable (gradients flow)
+  - Parameter count is under 5M
+
+7.3 test_distillation_loss.py (5 tests)
+  Tests for the three distillation losses:
+  - Attention transfer loss produces positive scalar
+  - Attention transfer handles spatial size mismatches
+  - Feature mimicry loss produces positive scalar
+  - Relation distillation loss produces positive scalar
+  - Combined loss returns total + individual loss dict
+
+7.4 test_training_integration.py (6 tests)
+  Tests for training helper functions:
+  - select_teacher_layers returns correct layers and channels
+  - select_teacher_layers picks last N by index
+  - compute_teacher_attention output shape and range
+  - compute_teacher_attention handles unbatched input
+  - discover_chunk_files from directory
+  - discover_chunk_files from single file
+
+7.5 test_integration.py (5 tests)
+  End-to-end tests with synthetic data:
+  - Save and load HybridTeacherPrediction objects
+  - Feature tensors are torch.Tensor type
+  - Full CPU training loop runs 3 steps with positive loss
+  - Checkpoint save/load produces identical model outputs
+  - Loss decreases over 10 training steps
+
+7.6 test_teacher_layer_selection.py (12 tests)
+  Tests for explicit layer selection and ablation support:
+  - Default auto-select picks last N layers by index
+  - Explicit single/two/five layer selection works
+  - Explicit selection overrides num_scales
+  - Unknown layer names raise KeyError
+  - Student model works with 1, 2, and 5 teacher layers
+  - 5 teacher layers with depth=4 raises AssertionError (requires depth>=5)
+  - Full forward+backward pass with 1-layer config
+  - Full forward+backward pass with 5-layer config (depth=5)
+
+7.7 test_feature_extractor.py (6 tests)
+  Tests for the hook-based feature extraction:
+  - Hooks capture layer outputs
+  - Outputs are properly detached
+  - Hooks can be closed/removed
+  - Hooks handle tuple outputs
+  - Layer lookup by name works
+  - Invalid layer names return None
+
+7.8 test_cluster_env.py, test_gpu_readiness.py
+  Cluster-specific tests (skipped when not on HPC):
+  - Singularity detection, GPU availability, CUDA operations
+  - Memory sufficiency, SLURM environment variables
+  - DataLoader worker spawning, package availability
+
+
+8. MODEL EXPORT AND INFERENCE
+================================================================================
+
+8.1 Export Script (src/export_model.py)
+---------------------------------------
+Exports the trained student model to ONNX and TFLite formats for deployment.
+
+InferenceWrapper: A simple nn.Module wrapper that calls the student model and
+returns only the segmentation mask (drops the distill_info dict). This is used
+for all export and inference operations.
+
+ONNX Export:
+  - Uses torch.onnx.export with opset 18
+  - Dynamic batch size support
+  - Input: "image" [B, 3, H, W], Output: "mask" [B, 1, H, W]
+  - Typical size: ~0.25MB for the 1.45M param model
+
+TFLite Export:
+  - Uses litert-torch (ai-edge-torch) for direct PyTorch-to-TFLite conversion
+  - Optional INT8 quantization via ai-edge-quantizer
+  - Typical size: ~5.35MB
+
+Usage:
+  python src/export_model.py --checkpoint trained_models/best_model.pt
+  python src/export_model.py --checkpoint trained_models/best_model.pt --img-size 320
+  python src/export_model.py --checkpoint trained_models/best_model.pt --onnx-only
+
+Note: The CBAM ChannelAttention module uses flatten(2).max(dim=2).values
+instead of AdaptiveMaxPool2d or amax, because those ops are not supported
+by ONNX/TFLite exporters.
+
+8.2 Benchmark Script (src/benchmark_model.py)
+----------------------------------------------
+Measures model performance metrics for comparison against YOLO26n-seg:
+
+Metrics computed:
+  - Parameters (M): Total parameter count
+  - FLOPs (B): Multiply-accumulate operations via thop (reported as MACs,
+    matching YOLO's "FLOPs" convention for fair comparison)
+  - PyTorch CPU speed (ms): Mean inference time with perf_counter
+  - ONNX CPU speed (ms): Via onnxruntime CPUExecutionProvider
+  - PyTorch GPU speed (ms): If CUDA available, with synchronize()
+  - TFLite CPU speed (ms): If TFLite model provided
+
+Outputs a comparison table with YOLO26n-seg reference values.
+
+Usage:
+  python src/benchmark_model.py --checkpoint trained_models/best_model.pt
+  python src/benchmark_model.py --checkpoint trained_models/best_model.pt \
+    --onnx trained_models/student_seg_320.onnx --img-size 320 640
+
+Benchmark results (base_channels=8, depth=4):
+  At 320x320: 1.45M params, 2.0B FLOPs, ~22ms PyTorch CPU, ~14ms ONNX CPU
+  At 640x640: 1.45M params, 7.9B FLOPs, ~75ms PyTorch CPU, ~66ms ONNX CPU
+  YOLO26n-seg reference: 2.7M params, 9.1B FLOPs, 53.3ms ONNX CPU (640x640)
+
+8.3 Inference Script (src/run_inference.py)
+-------------------------------------------
+Demo script for running the trained model on images, videos, or live webcam.
+Supports .pt, .onnx, and .tflite model formats.
+
+Modes:
+  --image photo.jpg          Single image with matplotlib visualization
+                             (original, heatmap, green overlay side by side)
+  --video clip.mp4           Video file with real-time overlay + frame counter
+  --video clip.mp4 --save out.mp4   Save processed video to file
+  --webcam                   Live camera feed with FPS counter
+
+All modes show a green overlay on detected person regions. Keyboard controls
+in video/webcam modes: 'q' to quit, '+'/'-' to adjust threshold.
+
+Usage:
+  python src/run_inference.py --model trained_models/best_model.pt --image photo.jpg
+  python src/run_inference.py --model trained_models/student_seg_320.onnx --webcam
+  python src/run_inference.py --model trained_models/best_model.pt --video clip.mp4
+
+
+9. REFERENCE IMPLEMENTATION (yolo_distillation/)
+================================================================================
+
+This folder contains the original online distillation implementation that was
+merged from a separate branch. It was designed for image inpainting (not
+segmentation) and uses a different training paradigm:
+
+  - teacher.py: Online YOLO teacher with per-batch feature extraction
+  - student.py: StudentGenerator U-Net with GatedConv (for inpainting)
+  - distillation_loss.py: Same three loss types (attention, mimicry, relation)
+  - attention.py: CBAM modules (ported to src/student/attention.py)
+  - trainer.py: Online DistillationTrainer (teacher runs every batch)
+  - train_distill.py: Entry point using config.yaml
+
+Key differences from the current implementation:
+  - Online vs offline: Original runs teacher every batch; ours pre-extracts
+  - GatedConv vs Conv2d: Original uses gated convolutions for inpainting holes;
+    ours uses standard convolutions (gated conv doubled parameter count)
+  - Tanh vs Sigmoid output: Original outputs [-1,1] for inpainting; ours
+    outputs [0,1] for binary segmentation masks
+  - No chunk loading: Original loads full dataset into memory
+
+This folder is read-only reference code and is not used by the active pipeline.
+Everything useful has been ported and adapted into src/.
+
+
+10. TRAINING PERFORMANCE AND CURRENT STATUS
+================================================================================
+
+Run 1 (distillation only, no augmentation, no seg loss):
+  Observed training metrics (base_channels=8, depth=4, batch=8, img=640):
+    - Epoch 1:  total=0.094, att=0.017, mim=0.153, rel=0.0004
+    - Epoch 2:  total=0.080, att=0.015, mim=0.129, rel=0.0002
+    - Epoch 10: total=0.075, att=0.013, mim=0.123, rel=0.0002
+
+  The distillation losses plateaued after ~5 epochs with minimal improvement.
+  The model learned to mimic teacher features but lacked direct mask
+  supervision, resulting in poor segmentation quality (green overlay
+  everywhere when tested on webcam).
+
+Run 2 (with augmentation + segmentation loss, old weights ATT=1, MIM=0.5, REL=0.5, SEG=1):
+  Re-extracted teacher data with segmentation_mask field, training from scratch:
+    - Epoch 1: total=0.836, att=0.023, mim=0.171, seg=0.727, IoU=0.668, Dice=0.798
+    - Epoch 7: total=0.457, att=0.020, mim=0.136, seg=0.369, IoU=0.779, Dice=0.874
+    - Epoch 9: total=0.435, att=0.019, mim=0.136, seg=0.347, IoU=0.777, Dice=0.872
+
+  Problem: Segmentation dominated ~80% of gradient, relation loss dead at 0.05%.
+
+Run 3 (rebalanced weights ATT=1, MIM=2, REL=10, SEG=0.5, grad-clip=1.0):
+  Resumed from epoch 9 checkpoint with new weights:
+    - Epoch 10: total=0.458, IoU=0.787, Dice=0.879
+    - Epoch 12: total=0.451, IoU=0.793, Dice=0.883
+
+  Gradient budget now: mimicry ~60%, seg ~36%, attention ~4%, relation ~1%.
+  Relation loss still small but contributing after Gram normalization fix
+  (changed from /(c*h*w) to /(h*w)).
+
+Training speed: ~4.5 it/s on a single NVIDIA L4 GPU
+  - ~13 seconds per chunk, ~288 chunks per epoch
+  - ~4-5 hours per epoch at 640x640
+  - ~2.5 epochs per 12-hour SLURM job (with auto-resume)
+
+Each 12-hour SLURM job completes ~2-3 epochs. Training 50 epochs would require
+~20 job submissions. Early stopping triggers when val IoU stops improving.
+
+
+11. LAYER ABLATION STUDY
+================================================================================
+
+The ablation study trains separate student models using different subsets of
+the YOLO teacher's backbone and neck layers. The goal is to determine which
+teacher layers contribute most to student segmentation quality.
+
+11.1 Available Teacher Layers
+-----------------------------
+The YOLO26n-seg backbone/neck has 5 candidate feature layers:
+
+  Layer       Type       Channels   Spatial    Description
+  -------     --------   --------   -------    -----------
+  model.4     Backbone   128        80x80      P3 — shallow, high-res, edges/textures
+  model.6     Backbone   128        40x40      P4 — mid-level features
+  model.9     Backbone   256        20x20      P5 — deep, low-res, semantic
+  model.12    Neck       384        40x40      FPN neck layer 1
+  model.15    Neck       256        80x80      FPN neck layer 2
+
+The default training (non-ablation) uses the last 3 auto-detected layers
+(model.9, model.12, model.15). The ablation study tests all meaningful
+subsets to find the optimal combination.
+
+11.2 Ablation Configurations (configs/ablation_configs.json)
+------------------------------------------------------------
+10 configurations covering singles, pairs, triples, and larger subsets:
+
+  Config Name           Layers                              What It Tests
+  --------------------  ----------------------------------  --------------------------
+  shallow_only          model.4                             Low-level features alone
+  mid_only              model.6                             Mid-level features alone
+  deep_only             model.9                             High-level features alone
+  shallow_deep          model.4 + model.9                   Can we skip mid?
+  mid_deep              model.6 + model.9                   Best 2-layer backbone?
+  deep_neck1            model.9 + model.12                  Does neck help backbone?
+  backbone_3            model.4 + model.6 + model.9         Full backbone (baseline)
+  deep_plus_neck        model.9 + model.12 + model.15       Neck vs backbone
+  backbone_plus_neck1   model.4 + model.6 + model.9 + 12   4-layer combo
+  all_5_layers          all 5 layers                        Maximum knowledge
+
+Note: all_5_layers requires depth=5 (set automatically from config).
+All other configs use the default depth=4.
+
+11.3 Directory Structure
+------------------------
+Each config trains independently and saves to its own subdirectory:
+
+  /ceph/project/P6-Machine-Vision/P6/
+  |-- results/
+  |   |-- hybrid_predictions/       Original extraction (3 layers)
+  |   |-- ablation_predictions/     Ablation extraction (all 5 layers)
+  |
+  |-- trained_models/
+  |   |-- best_model.pt             Default training (non-ablation)
+  |   |-- ablation/
+  |       |-- shallow_only/
+  |       |   |-- best_model.pt
+  |       |   |-- checkpoint_epoch_1.pt
+  |       |   |-- checkpoint_epoch_2.pt
+  |       |   |-- training_history.json
+  |       |   |-- final_model.pt
+  |       |-- mid_only/
+  |       |   |-- best_model.pt
+  |       |   |-- ...
+  |       |-- backbone_3/
+  |       |   |-- ...
+  |       |-- ...                    (one subdirectory per config)
+
+Each subdirectory has its own checkpoints, training history, and best model.
+Configs are completely independent — they do not share checkpoints.
+
+11.4 Step-by-Step Workflow
+--------------------------
+
+STEP 1: Pull the latest code on the cluster.
+
+  cd /path/to/P6
+  git pull
+
+STEP 2: Extract teacher features with all 5 layers (run ONCE, shared by all
+configs). This is separate from the existing hybrid_predictions extraction.
+
+  sbatch slurm/extract_all_layers.slurm
+
+  This runs 4 parallel workers (~6 hours total). Output goes to:
+    /ceph/project/P6-Machine-Vision/P6/results/ablation_predictions/
+
+  Check progress:
+    squeue --me
+    tail -f /ceph/project/P6-Machine-Vision/P6/logs/extract_all_<jobid>_<worker>.out
+
+  IMPORTANT: The existing training (epoch 7+) on hybrid_predictions/ is NOT
+  affected. The ablation extraction writes to a separate directory.
+
+STEP 3: Each group member picks a config and starts training.
+
+  Singles (1 layer):
+    CONFIG=shallow_only        sbatch slurm/train_ablation.slurm   # model.4
+    CONFIG=mid_only            sbatch slurm/train_ablation.slurm   # model.6
+    CONFIG=deep_only           sbatch slurm/train_ablation.slurm   # model.9
+
+  Pairs (2 layers):
+    CONFIG=shallow_deep        sbatch slurm/train_ablation.slurm   # model.4 + model.9
+    CONFIG=mid_deep            sbatch slurm/train_ablation.slurm   # model.6 + model.9
+    CONFIG=deep_neck1          sbatch slurm/train_ablation.slurm   # model.9 + model.12
+
+  Triples (3 layers):
+    CONFIG=backbone_3          sbatch slurm/train_ablation.slurm   # model.4+6+9 (baseline)
+    CONFIG=deep_plus_neck      sbatch slurm/train_ablation.slurm   # model.9+12+15
+
+  Larger (4 layers):
+    CONFIG=backbone_plus_neck1 sbatch slurm/train_ablation.slurm   # model.4+6+9+12
+    CONFIG=backbone_plus_neck2 sbatch slurm/train_ablation.slurm   # model.4+6+9+15
+
+  Each person picks a different config. Multiple configs can train in parallel
+  on different GPUs/nodes.
+
+STEP 4: Monitor training.
+
+  # Check which jobs are running
+  squeue --me
+
+  # Watch training progress (tqdm output goes to stderr)
+  tail -f /ceph/project/P6-Machine-Vision/P6/logs/ablation_<jobid>.err
+
+  # Check training output
+  cat /ceph/project/P6-Machine-Vision/P6/logs/ablation_<jobid>.out
+
+STEP 5: Re-submit if the SLURM time limit expires (auto-resume).
+
+  CONFIG=shallow_only sbatch slurm/train_ablation.slurm
+
+  The script automatically detects the latest checkpoint and resumes.
+
+STEP 6: Compare results across all configs.
+
+  Run on the server with srun:
+  srun --gres=gpu:0 --mem=8G --cpus-per-task=2 \
+    singularity exec \
+      -B ~/kd_venv:/scratch/venv \
+      -B "$PWD":/scratch/project \
+      -B /ceph/project/P6-Machine-Vision/P6:/ceph/project/P6-Machine-Vision/P6 \
+      /ceph/container/pytorch/pytorch_25.12.sif \
+      /bin/bash -c "
+        source /scratch/venv/bin/activate
+        cd /scratch/project
+        python src/compare_ablations.py \
+          --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
+          --configs configs/ablation_configs.json \
+          --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png
+      "
+
+  Transfer the plot to your local machine:
+  scp ailab-vpn:/ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png ~/Dokumenter/GitHub/P6/
+
+  This prints a table of best IoU, Dice, and validation losses per config
+  and saves an overlay plot comparing IoU, Dice, and loss curves.
+
+11.5 Commands Reference (Quick Copy-Paste)
+------------------------------------------
+
+# Extract all 5 layers (run once before any ablation training)
+sbatch slurm/extract_all_layers.slurm
+
+# --- SINGLES ---
+CONFIG=shallow_only   sbatch slurm/train_ablation.slurm   # model.4
+CONFIG=mid_only       sbatch slurm/train_ablation.slurm   # model.6
+CONFIG=deep_only      sbatch slurm/train_ablation.slurm   # model.9
+
+# --- PAIRS ---
+CONFIG=shallow_deep   sbatch slurm/train_ablation.slurm   # model.4 + model.9
+CONFIG=mid_deep       sbatch slurm/train_ablation.slurm   # model.6 + model.9
+CONFIG=deep_neck1     sbatch slurm/train_ablation.slurm   # model.9 + model.12
+
+# --- TRIPLES ---
+CONFIG=backbone_3     sbatch slurm/train_ablation.slurm   # model.4+6+9 (baseline)
+CONFIG=deep_plus_neck sbatch slurm/train_ablation.slurm   # model.9+12+15
+
+# --- LARGER ---
+CONFIG=backbone_plus_neck1 sbatch slurm/train_ablation.slurm  # model.4+6+9+12
+CONFIG=backbone_plus_neck2 sbatch slurm/train_ablation.slurm  # model.4+6+9+15
+
+# Compare results (run via srun on server)
+srun --gres=gpu:0 --mem=8G --cpus-per-task=2 singularity exec \
+  -B ~/kd_venv:/scratch/venv -B "$PWD":/scratch/project \
+  -B /ceph/project/P6-Machine-Vision/P6:/ceph/project/P6-Machine-Vision/P6 \
+  /ceph/container/pytorch/pytorch_25.12.sif /bin/bash -c "
+    source /scratch/venv/bin/activate && cd /scratch/project && \
+    python src/compare_ablations.py \
+      --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
+      --configs configs/ablation_configs.json \
+      --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png"
+
+# Transfer plot to local machine
+scp ailab-vpn:/ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png ~/Dokumenter/GitHub/P6/
+
+# Override defaults (optional)
+EPOCHS=30 BATCH_SIZE=16 CONFIG=backbone_3 sbatch slurm/train_ablation.slurm
+
+# Target a specific node
+CONFIG=shallow_only sbatch --nodelist=ailab-l4-06 slurm/train_ablation.slurm
+
+# See all available configs
+CONFIG= sbatch slurm/train_ablation.slurm   # (will print config list and exit)
+
+11.6 Technical Details
+----------------------
+  - The training script's --teacher-layers flag selects which layers from the
+    extracted chunks to use. Unused layers in the chunks are simply ignored.
+  - Each config creates a StudentSegmentation model with teacher_channels
+    matching only the selected layers. Fewer layers = fewer projection heads
+    = slightly fewer parameters.
+  - All configs use depth=4 (default), keeping the student at ~1.4-1.46M params
+    (~53% of the teacher's 2.7M). This is intentional: a 5-layer config would
+    require depth=5, which inflates the student to 5.66M params (210% of the
+    teacher), defeating the purpose of knowledge distillation. The two 4-layer
+    configs (backbone_plus_neck1 and backbone_plus_neck2) test whether adding
+    a 4th layer helps while keeping the model deployable on Raspberry Pi 5.
+  - All configs share the same extraction data (ablation_predictions/).
+    No re-extraction is needed when adding new configs.
+  - Auto-resume works per config: re-submitting the same CONFIG picks up
+    from that config's latest checkpoint.
+
+
+12. STUFF FOR THE REPORT
+================================================================================
+
+Notes, framings, and key findings to include in the P6 report.
+
+12.1 Loss Weight Rebalancing (Mid-Training Correction)
+-------------------------------------------------------
+After analyzing training diagnostics at epoch 9, we identified that the
+segmentation loss dominated ~80% of the gradient while the relation distillation
+loss was effectively dead at ~0.05%. We rebalanced the loss weights and resumed
+training from the existing checkpoint. This is a legitimate practice when a
+problem is discovered mid-training — the model retains its learned features
+while future gradient updates are rebalanced.
+
+Old weights: ATT=1.0, MIM=0.5, REL=0.5, SEG=1.0
+  -> Gradient budget: seg ~80%, mim ~16%, att ~4%, rel ~0.05%
+
+Intermediate weights (epoch 10-12): ATT=1.0, MIM=2.0, REL=10.0, SEG=0.5
+  -> Gradient budget: mim ~60%, seg ~36%, att ~4%, rel ~1%
+
+The Gram matrix normalization in the relation loss was also dividing by (C*H*W)
+instead of (H*W), making the raw loss value ~128-256x smaller than it should
+have been. After fixing the normalization (epoch 13+), the REL=10.0 weight
+caused relation to dominate at ~61% of gradient. Weight was corrected to 1.0.
+
+Final weights: ATT=1.0, MIM=2.0, REL=1.0, SEG=0.5
+  Training resumed from epoch 12 checkpoint with --reset-best-loss.
+
+The plot script supports marking the weight change point:
+  python src/plot_training_history.py --weight-change 9.5
+
+12.2 Offline vs Online Knowledge Distillation
+----------------------------------------------
+A key architectural decision worth discussing: we use offline KD (extract
+teacher features once, train student repeatedly) rather than online KD (run
+teacher every batch). Trade-offs:
+
+  Offline advantages:
+    - Teacher runs once — saves GPU time across multiple student experiments
+    - Enables the ablation study: same extracted data, different layer subsets
+    - Student training is faster (no teacher forward pass per batch)
+    - Reproducible: same teacher features every run
+
+  Offline disadvantages:
+    - Large disk footprint (~300GB for 288 chunks with 5 layers)
+    - Teacher features are fixed — no data augmentation on teacher side
+    - Augmentation must be applied consistently to images AND stored features
+
+12.3 Ablation Study Design
+---------------------------
+The ablation study is a systematic experiment varying which teacher layers the
+student learns from, while keeping all other hyperparameters fixed. This
+isolates the effect of teacher layer selection on student segmentation quality.
+
+Key design choices to mention:
+  - 10 configurations spanning singles, pairs, triples, and larger subsets
+  - All configs use the same rebalanced loss weights and hyperparameters
+  - All configs train from scratch (no transfer between configs)
+  - IoU/Dice as primary metrics (directly measures mask quality)
+  - Early stopping on val IoU prevents wasted compute
+
+12.4 Model Efficiency
+----------------------
+The student model (U-Net, ~1.45M params) is roughly half the size of the
+teacher (YOLO26n-seg, 2.7M params). For the report, benchmark both using:
+  python src/benchmark_model.py --checkpoint trained_models/best_model.pt
+
+Key comparison points: parameter count, FLOPs, and inference speed on CPU
+(representing the Raspberry Pi 5 deployment target).
+
+12.5 Training Metrics Interpretation
+--------------------------------------
+  - IoU (Intersection over Union): Primary metric for segmentation quality.
+    Measures overlap between predicted and teacher mask. Range 0-1, higher
+    is better. At epoch 12: 0.793.
+  - Dice score: Related to IoU (Dice = 2*IoU / (1+IoU)). More forgiving of
+    small regions. At epoch 12: 0.883.
+  - These metrics are measured against the teacher's pseudo ground-truth masks,
+    not human annotations. The student can never exceed the teacher's mask
+    quality — the ceiling is the teacher's own accuracy on the dataset.
