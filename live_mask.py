@@ -29,12 +29,12 @@ from multiprocessing import shared_memory
 
 # ── config ────────────────────────────────────────────────────────────────────
 SOURCE         = 0                # webcam index, or path to a video file
-MASK_THRESHOLD = 0.3              # segmentation confidence (0–1, lower = more aggressive)
+MASK_THRESHOLD = 0.7              # segmentation confidence (0–1, lower = more aggressive)
 MASK_DILATE    = 10               # expand mask outward to cover person edges
 MASK_BLUR      = 1                # feather mask edges for smooth blending (must be odd)
 BG_LEARN       = 0.02             # background learning rate (higher = adapts faster)
-MASK_EDGE_PAD  = 50               # if mask is within this many px of top/bottom, extend to edge
-MODEL          = "selfie_segmenter"    # model name — auto-downloads and exports if missing
+MASK_EDGE_PAD  = 20               # if mask is within this many px of top/bottom, extend to edge
+MODEL          = "best_model"    # model name — auto-downloads and exports if missing
                                   # use "selfie_segmenter" for the lightweight TFLite model
 MODEL_IMGSZ    = 320              # inference resolution used when exporting YOLO models
 
@@ -201,7 +201,7 @@ def _extend_mask_edges(mask, h, w):
 
 def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
                  frame_lock, mask_lock, mask_ready,
-                 stop_event, seg_fps_val, frame_interval):
+                 stop_event, seg_fps_val, det_count, prob_stats, frame_interval):
     """Inference loop for TFLite models (selfie_segmenter and YOLO .tflite)."""
     try:
         from ai_edge_litert.interpreter import Interpreter
@@ -289,6 +289,7 @@ def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
         if selfie_idx is not None:
             raw        = interp.get_tensor(selfie_idx)[0, :, :, 0]
             small_mask = (raw > MASK_THRESHOLD).astype(np.uint8) * 255
+            det_count.value = 1 if small_mask.any() else 0
         else:
             detections = interp.get_tensor(det_idx)[0]
             prototypes = interp.get_tensor(proto_idx)[0]
@@ -300,6 +301,7 @@ def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
             else:
                 valid  = (detections[:, 4] > MASK_THRESHOLD) & (detections[:, 5].astype(int) == 0)
                 coeffs = detections[valid, 6:]
+            det_count.value = int(valid.sum())
             if valid.any():
                 np.copyto(proto_flat_buf, prototypes.reshape(-1, n_proto))
                 logits       = coeffs @ proto_flat_buf.T
@@ -330,19 +332,40 @@ def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
 
 def _pt_loop(model_file, frame_buf, mask_buf, frame_shape,
              frame_lock, mask_lock, mask_ready,
-             stop_event, seg_fps_val, frame_interval):
-    """Inference loop for PyTorch YOLO .pt models via ultralytics."""
-    from ultralytics import YOLO
-    yolo = YOLO(model_file)
+             stop_event, seg_fps_val, det_count, prob_stats, frame_interval):
+    """Inference loop for .pt models — auto-detects student vs ultralytics YOLO."""
+    import torch, sys, os
+    ckpt = torch.load(model_file, map_location='cpu', weights_only=False)
+    is_student = isinstance(ckpt, dict) and 'model_state_dict' in ckpt
 
     h, w = frame_shape[:2]
     dilate_k      = max(3, MASK_DILATE | 1)
     blur_k        = max(3, MASK_BLUR   | 1)
     dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_k, dilate_k))
-    print(f"[worker] PyTorch/YOLO model loaded OK — imgsz {MODEL_IMGSZ}, "
-          f"dilate {dilate_k}×{dilate_k}, blur {blur_k}×{blur_k}")
-    print("[worker] entering inference loop")
 
+    if is_student:
+        # Add project root to path so student_model / attention can be imported
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from student.model import StudentSegmentation
+        args         = ckpt['args']
+        teacher_ch   = ckpt.get('teacher_channels', [128, 128, 256])
+        model = StudentSegmentation(
+            base_channels=args['base_channels'],
+            depth=args['depth'],
+            teacher_channels=teacher_ch,
+        )
+        model.load_state_dict(ckpt['model_state_dict'])
+        model.eval()
+        print(f"[worker] Student model loaded OK — base_ch={args['base_channels']}, "
+              f"depth={args['depth']}, imgsz {MODEL_IMGSZ}, "
+              f"dilate {dilate_k}×{dilate_k}, blur {blur_k}×{blur_k}")
+    else:
+        from ultralytics import YOLO
+        model = YOLO(model_file)
+        print(f"[worker] YOLO model loaded OK — imgsz {MODEL_IMGSZ}, "
+              f"dilate {dilate_k}×{dilate_k}, blur {blur_k}×{blur_k}")
+
+    print("[worker] entering inference loop")
     prev_time = time.time()
     while not stop_event.is_set():
         t_start = time.time()
@@ -350,15 +373,30 @@ def _pt_loop(model_file, frame_buf, mask_buf, frame_shape,
         with frame_lock:
             frame = frame_buf.copy()
 
-        results = yolo(frame, imgsz=MODEL_IMGSZ, verbose=False, classes=[0])
-
-        if results[0].masks is not None:
-            masks_np = results[0].masks.data.cpu().numpy()   # (N, H, W) float32
-            combined  = masks_np.max(axis=0)                  # (H, W)
-            small_mask = (combined > 0.5).astype(np.uint8) * 255
+        if is_student:
+            small = cv2.resize(frame, (MODEL_IMGSZ, MODEL_IMGSZ))
+            rgb   = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            inp   = torch.from_numpy(rgb).permute(2, 0, 1).unsqueeze(0)  # [1,3,H,W]
+            with torch.no_grad():
+                mask_out, _ = model(inp)                     # [1, 1, H, W] sigmoid
+            prob = mask_out[0, 0].numpy()                    # (H, W)
+            prob_stats[0] = float(prob.min())
+            prob_stats[1] = float(prob.max())
+            prob_stats[2] = float(prob.mean())
+            small_mask = (prob > MASK_THRESHOLD).astype(np.uint8) * 255
             mask = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+            det_count.value = 1 if small_mask.any() else 0
         else:
-            mask = np.zeros((h, w), dtype=np.uint8)
+            results = model(frame, imgsz=MODEL_IMGSZ, verbose=False, classes=[0])
+            r = results[0]
+            det_count.value = len(r.boxes) if r.boxes is not None else 0
+            if r.masks is not None:
+                masks_np   = r.masks.data.cpu().numpy()      # (N, H, W) float32
+                combined   = masks_np.max(axis=0)
+                small_mask = (combined > 0.5).astype(np.uint8) * 255
+                mask = cv2.resize(small_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+            else:
+                mask = np.zeros((h, w), dtype=np.uint8)
 
         if mask.any():
             mask = cv2.dilate(mask, dilate_kernel, iterations=2)
@@ -384,7 +422,7 @@ def _pt_loop(model_file, frame_buf, mask_buf, frame_shape,
 
 def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
                frame_lock, mask_lock, mask_ready,
-               stop_event, seg_fps_val, cam_fps):
+               stop_event, seg_fps_val, det_count, prob_stats, cam_fps):
     """Dispatch to the correct inference backend based on model file extension."""
     model_file     = os.path.join(os.path.dirname(__file__) or ".", MODEL_PATH)
     frame_interval = 1.0 / max(cam_fps, 1.0)
@@ -400,7 +438,7 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
     try:
         loop_fn(model_file, frame_buf, mask_buf, frame_shape,
                 frame_lock, mask_lock, mask_ready,
-                stop_event, seg_fps_val, frame_interval)
+                stop_event, seg_fps_val, det_count, prob_stats, frame_interval)
     except Exception as exc:
         print(f"[worker] CRASHED: {exc}")
         import traceback; traceback.print_exc()
@@ -481,6 +519,8 @@ def main():
     mask_ready   = mp.Event()
     stop_event   = mp.Event()
     seg_fps_val  = mp.Value('d', 0.0)       # shared double for segmentation FPS
+    det_count    = mp.Value('i', 0)         # shared int for last detection count
+    prob_stats   = mp.Array('d', [0.0, 0.0, 0.0])  # [min, max, mean] for student model
 
     grabber = mp.Process(
         target=frame_grabber,
@@ -492,7 +532,7 @@ def main():
         target=seg_worker,
         args=(shm_frame.name, shm_mask.name, frame_shape,
               frame_lock, mask_lock, mask_ready,
-              stop_event, seg_fps_val, cam_fps),
+              stop_event, seg_fps_val, det_count, prob_stats, cam_fps),
         daemon=True,
     )
 
@@ -619,8 +659,15 @@ def main():
             fps = 1.0 / max(curr_time - prev_time, 1e-9)
             prev_time = curr_time
             seg_fps = seg_fps_val.value
-            cv2.putText(output, f"Display: {fps:.0f}  Seg: {seg_fps:.1f}", (10, 30),
+            n_dets  = det_count.value
+            det_str = f"  Det: {n_dets}" if n_dets >= 0 else ""
+            cv2.putText(output, f"Display: {fps:.0f}  Seg: {seg_fps:.1f}{det_str}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            p_min, p_max, p_mean = prob_stats[0], prob_stats[1], prob_stats[2]
+            if p_max > 0:
+                cv2.putText(output,
+                            f"Prob  min:{p_min:.2f}  max:{p_max:.2f}  mean:{p_mean:.2f}",
+                            (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
 
             # ── mask recording ───────────────────────────────────────────
             if mask_writer is not None:
