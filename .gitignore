@@ -21,7 +21,6 @@ env/
 .cache/
 
 # Model files
-*.pt
 *.onnx
 *.npy
 *_saved_model/
