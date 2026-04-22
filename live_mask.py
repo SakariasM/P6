@@ -34,10 +34,10 @@ MASK_DILATE    = 10               # expand mask outward to cover person edges
 MASK_BLUR      = 1                # feather mask edges for smooth blending (must be odd)
 BG_LEARN       = 0.02             # background learning rate (higher = adapts faster)
 MASK_EDGE_PAD  = 50               # if mask is within this many px of top/bottom, extend to edge
-MODEL          = "selfie_segmenter"    # model name — auto-downloads and exports if missing
+MODEL          = "student_seg_320"    # model name — auto-downloads and exports if missing
                                   # use "selfie_segmenter" for the lightweight TFLite model
 MODEL_IMGSZ    = 320              # inference resolution used when exporting YOLO models
-MODEL_PATH     = f"models/{MODEL}/{MODEL}.tflite" if MODEL == "selfie_segmenter" else f"models/{MODEL}/{MODEL}_float32.tflite"
+MODEL_PATH     = f"models/{MODEL}/{MODEL}.tflite"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -195,10 +195,20 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
         inp_detail  = interp.get_input_details()[0]
         out_details = interp.get_output_details()
         inp_idx = inp_detail["index"]
-        _, model_h, model_w, _ = inp_detail["shape"]
+        inp_shape = inp_detail["shape"]
+
+        # Detect NCHW (PyTorch-exported) vs NHWC (TFLite standard) input layout
+        if inp_shape[1] <= 4 and inp_shape[2] > 4:
+            # NCHW: (1, 3, H, W)
+            nchw = True
+            _, _, model_h, model_w = inp_shape
+        else:
+            # NHWC: (1, H, W, 3)
+            nchw = False
+            _, model_h, model_w, _ = inp_shape
 
         # Detect model type by output shapes:
-        #   Selfie segmenter: single output (1, H, W, 1) — direct mask
+        #   Selfie segmenter / student: single output (1, H, W, 1) or (1, 1, H, W)
         #   YOLO post-NMS:    (1, n_dets, 38) + (1, H, W, 32)
         #   YOLO raw:         (1, 116, 2100)  + (1, H, W, 32)
         det_idx, proto_idx = None, None
@@ -207,9 +217,9 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
         proto_h = proto_w = n_proto = None
 
         if len(out_details) == 1 and len(out_details[0]["shape"]) == 4:
-            # selfie_segmenter: single (1, H, W, 1) output
+            # Single mask output: (1, H, W, 1) or (1, 1, H, W)
             selfie_idx = out_details[0]["index"]
-            fmt = "selfie_segmenter"
+            fmt = "binary mask (NCHW)" if nchw else "selfie_segmenter"
         else:
             for od in out_details:
                 if len(od["shape"]) == 3:
@@ -257,7 +267,10 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
     print(f"[worker] post-process at {mask_res_w}×{mask_res_h}: "
           f"dilate {small_dilate}×{small_dilate}, blur {small_blur}×{small_blur}")
 
-    input_data = np.empty((1, model_h, model_w, 3), dtype=np.float32)
+    if nchw:
+        input_data = np.empty((1, 3, model_h, model_w), dtype=np.float32)
+    else:
+        input_data = np.empty((1, model_h, model_w, 3), dtype=np.float32)
     proto_flat_buf = None if selfie_idx is not None else np.empty((proto_h * proto_w, n_proto), dtype=np.float32)
 
     frame_interval = 1.0 / max(cam_fps, 1.0)
@@ -274,14 +287,23 @@ def seg_worker(frame_shm_name, mask_shm_name, frame_shape,
             # Preprocess: resize → RGB → normalise
             small = cv2.resize(frame, (model_w, model_h))
             cv2.cvtColor(small, cv2.COLOR_BGR2RGB, dst=small)
-            np.multiply(small, 1.0 / 255.0, out=input_data[0], casting="unsafe")
+            if nchw:
+                # (H, W, 3) → (3, H, W)
+                np.multiply(small.transpose(2, 0, 1), 1.0 / 255.0,
+                            out=input_data[0], casting="unsafe")
+            else:
+                np.multiply(small, 1.0 / 255.0, out=input_data[0], casting="unsafe")
 
             interp.set_tensor(inp_idx, input_data)
             interp.invoke()
 
             if selfie_idx is not None:
-                # selfie_segmenter: direct (1, H, W, 1) mask output
-                raw = interp.get_tensor(selfie_idx)[0, :, :, 0]      # (model_h, model_w)
+                # Direct mask output: (1, H, W, 1) or (1, 1, H, W)
+                out = interp.get_tensor(selfie_idx)
+                if nchw:
+                    raw = out[0, 0, :, :]          # (1, 1, H, W) → (H, W)
+                else:
+                    raw = out[0, :, :, 0]           # (1, H, W, 1) → (H, W)
                 small_mask = (raw > MASK_THRESHOLD).astype(np.uint8) * 255
             else:
                 detections = interp.get_tensor(det_idx)[0]            # post-NMS or raw
@@ -363,7 +385,13 @@ def _parse_args():
 
 def main():
     args = _parse_args()
-    ensure_model()
+    if not os.path.exists(MODEL_PATH):
+        print(f"[setup] Model not found: {MODEL_PATH}")
+        print(f"[setup] Export it on a PC first:")
+        print(f"[setup]   python src/export_model.py --checkpoint trained_models/best_model.pt --img-size {MODEL_IMGSZ}")
+        print(f"[setup]   mkdir -p models/{MODEL}")
+        print(f"[setup]   cp trained_models/{MODEL}_float32.tflite models/{MODEL}/")
+        sys.exit(1)
 
     # -- determine source --
     source = args.input if args.input else SOURCE
