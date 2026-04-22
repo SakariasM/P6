@@ -146,14 +146,14 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
         ax_iou.set_title("Validation IoU by Layer Configuration")
         ax_iou.legend(fontsize=7, loc="lower right")
         ax_iou.grid(True, alpha=0.3)
-        ax_iou.set_ylim(0, 1)
+        ax_iou.set_ylim(0.5, 1)
 
         ax_dice.set_xlabel("Epoch")
         ax_dice.set_ylabel("Dice")
         ax_dice.set_title("Validation Dice by Layer Configuration")
         ax_dice.legend(fontsize=7, loc="lower right")
         ax_dice.grid(True, alpha=0.3)
-        ax_dice.set_ylim(0, 1)
+        ax_dice.set_ylim(0.7, 1)
 
     ax_total.set_xlabel("Epoch")
     ax_total.set_ylabel("Loss")

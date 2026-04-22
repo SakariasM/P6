@@ -95,7 +95,7 @@ def plot_single(history: list[dict], output: Path, args):
             ax.set_title("Validation Segmentation Quality (IoU / Dice)")
             ax.legend()
             ax.grid(True, alpha=0.3)
-            ax.set_ylim(0, 1)
+            ax.set_ylim(0.5, 1)
 
         elif panel == "val_loss":
             keys = [k for k in LOSS_KEYS if k != "segmentation" or has_seg]
