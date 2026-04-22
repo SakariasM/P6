@@ -26,7 +26,11 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 # Install extra deps not in the container
-pip install --no-cache-dir ultralytics tqdm pillow pytest opencv-python-headless
+# Install ultralytics first, then force headless opencv to replace the GUI
+# version that ultralytics pulls in (GUI opencv needs libxcb which the
+# container doesn't have)
+pip install --no-cache-dir ultralytics tqdm pillow pytest
+pip install --no-cache-dir --force-reinstall opencv-python-headless
 
 # Verify
 echo ""
