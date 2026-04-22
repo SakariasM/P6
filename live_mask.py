@@ -204,37 +204,45 @@ def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
     interp = Interpreter(model_path=model_file, num_threads=2)
     interp.allocate_tensors()
 
-        inp_detail  = interp.get_input_details()[0]
-        out_details = interp.get_output_details()
-        inp_idx = inp_detail["index"]
-        inp_shape = inp_detail["shape"]
+    inp_detail  = interp.get_input_details()[0]
+    out_details = interp.get_output_details()
+    inp_idx = inp_detail["index"]
+    inp_shape = inp_detail["shape"]
 
-        # Detect NCHW (PyTorch-exported) vs NHWC (TFLite standard) input layout
-        if inp_shape[1] <= 4 and inp_shape[2] > 4:
-            # NCHW: (1, 3, H, W)
-            nchw = True
-            _, _, model_h, model_w = inp_shape
-        else:
-            # NHWC: (1, H, W, 3)
-            nchw = False
-            _, model_h, model_w, _ = inp_shape
+    # Detect NCHW (PyTorch-exported) vs NHWC (TFLite standard) input layout
+    if inp_shape[1] <= 4 and inp_shape[2] > 4:
+        # NCHW: (1, 3, H, W)
+        nchw = True
+        _, _, model_h, model_w = inp_shape
+    else:
+        # NHWC: (1, H, W, 3)
+        nchw = False
+        _, model_h, model_w, _ = inp_shape
 
-        # Detect model type by output shapes:
-        #   Selfie segmenter / student: single output (1, H, W, 1) or (1, 1, H, W)
-        #   YOLO post-NMS:    (1, n_dets, 38) + (1, H, W, 32)
-        #   YOLO raw:         (1, 116, 2100)  + (1, H, W, 32)
-        det_idx, proto_idx = None, None
-        selfie_idx = None
-        det_shape = None
-        proto_h = proto_w = n_proto = None
+    # Detect model type by output shapes:
+    #   Selfie segmenter / student: single output (1, H, W, 1) or (1, 1, H, W)
+    #   YOLO post-NMS:    (1, n_dets, 38) + (1, H, W, 32)
+    #   YOLO raw:         (1, 116, 2100)  + (1, H, W, 32)
+    det_idx, proto_idx = None, None
+    selfie_idx = None
+    det_shape = None
+    proto_h = proto_w = n_proto = None
 
-        if len(out_details) == 1 and len(out_details[0]["shape"]) == 4:
-            # Single mask output: (1, H, W, 1) or (1, 1, H, W)
-            selfie_idx = out_details[0]["index"]
-            fmt = "binary mask (NCHW)" if nchw else "selfie_segmenter"
-        else:
-            n_classes = None
-            fmt = f"post-NMS (dets×features={det_shape[1]}×{det_shape[2]})"
+    if len(out_details) == 1 and len(out_details[0]["shape"]) == 4:
+        # Single mask output: (1, H, W, 1) or (1, 1, H, W)
+        selfie_idx = out_details[0]["index"]
+        fmt = "binary mask (NCHW)" if nchw else "selfie_segmenter"
+    else:
+        for od in out_details:
+            if len(od["shape"]) == 3:
+                det_idx   = od["index"]
+                det_shape = od["shape"]
+            elif len(od["shape"]) == 4:
+                proto_idx = od["index"]
+                _, proto_h, proto_w, n_proto = od["shape"]
+        if det_idx is None or proto_idx is None:
+            raise RuntimeError(f"Unexpected output shapes: {[od['shape'] for od in out_details]}")
+        fmt = f"post-NMS (dets×features={det_shape[1]}×{det_shape[2]})"
 
     if selfie_idx is not None:
         print(f"[worker] model loaded OK — input {model_w}×{model_h}, format: {fmt}")
@@ -258,8 +266,6 @@ def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
         input_data = np.empty((1, model_h, model_w, 3), dtype=np.float32)
     proto_flat_buf = None if selfie_idx is not None else np.empty((proto_h * proto_w, n_proto), dtype=np.float32)
 
-    frame_interval = 1.0 / max(cam_fps, 1.0)
-
     print("[worker] entering inference loop")
     prev_time = time.time()
     while not stop_event.is_set():
@@ -268,30 +274,33 @@ def _tflite_loop(model_file, frame_buf, mask_buf, frame_shape,
         with frame_lock:
             frame = frame_buf.copy()
 
-            # Preprocess: resize → RGB → normalise
-            small = cv2.resize(frame, (model_w, model_h))
-            cv2.cvtColor(small, cv2.COLOR_BGR2RGB, dst=small)
-            if nchw:
-                # (H, W, 3) → (3, H, W)
-                np.multiply(small.transpose(2, 0, 1), 1.0 / 255.0,
-                            out=input_data[0], casting="unsafe")
-            else:
-                np.multiply(small, 1.0 / 255.0, out=input_data[0], casting="unsafe")
+        # Preprocess: resize → RGB → normalise
+        small = cv2.resize(frame, (model_w, model_h))
+        cv2.cvtColor(small, cv2.COLOR_BGR2RGB, dst=small)
+        if nchw:
+            # (H, W, 3) → (3, H, W)
+            np.multiply(small.transpose(2, 0, 1), 1.0 / 255.0,
+                        out=input_data[0], casting="unsafe")
+        else:
+            np.multiply(small, 1.0 / 255.0, out=input_data[0], casting="unsafe")
 
         interp.set_tensor(inp_idx, input_data)
         interp.invoke()
 
-            if selfie_idx is not None:
-                # Direct mask output: (1, H, W, 1) or (1, 1, H, W)
-                out = interp.get_tensor(selfie_idx)
-                if nchw:
-                    raw = out[0, 0, :, :]          # (1, 1, H, W) → (H, W)
-                else:
-                    raw = out[0, :, :, 0]           # (1, H, W, 1) → (H, W)
-                small_mask = (raw > MASK_THRESHOLD).astype(np.uint8) * 255
+        if selfie_idx is not None:
+            # Direct mask output: (1, H, W, 1) or (1, 1, H, W)
+            out = interp.get_tensor(selfie_idx)
+            if nchw:
+                raw = out[0, 0, :, :]          # (1, 1, H, W) → (H, W)
             else:
-                valid  = (detections[:, 4] > MASK_THRESHOLD) & (detections[:, 5].astype(int) == 0)
-                coeffs = detections[valid, 6:]
+                raw = out[0, :, :, 0]           # (1, H, W, 1) → (H, W)
+            small_mask = (raw > MASK_THRESHOLD).astype(np.uint8) * 255
+        else:
+            detections = interp.get_tensor(det_idx)[0]
+            prototypes = interp.get_tensor(proto_idx)[0]
+            small_mask = np.zeros((proto_h, proto_w), dtype=np.uint8)
+            valid  = (detections[:, 4] > MASK_THRESHOLD) & (detections[:, 5].astype(int) == 0)
+            coeffs = detections[valid, 6:]
             det_count.value = int(valid.sum())
             if valid.any():
                 np.copyto(proto_flat_buf, prototypes.reshape(-1, n_proto))
