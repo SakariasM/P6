@@ -37,7 +37,7 @@ MASK_EDGE_PAD  = 50               # if mask is within this many px of top/bottom
 MODEL          = "student_seg_320"    # model name — auto-downloads and exports if missing
                                   # use "selfie_segmenter" for the lightweight TFLite model
 MODEL_IMGSZ    = 320              # inference resolution used when exporting YOLO models
-MODEL_PATH     = f"models/{MODEL}/{MODEL}.tflite"
+MODEL_PATH     = f"models/{MODEL}/{MODEL}_float32.tflite"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -549,17 +549,10 @@ def main():
     frame_buf = _np_from_shm(shm_frame, frame_shape)
     mask_buf  = _np_from_shm(shm_mask,  (h, w))
 
-    background  = first.copy().astype(np.float32)
     person_mask = np.zeros((h, w), dtype=np.uint8)
-    debug       = False
+    debug       = True
     prev_time   = time.time()
-
-    # Cached mask-derived arrays (recomputed only when YOLO sends a new mask)
-    has_person     = False
-    cached_alpha_3ch     = None
-    cached_inv_alpha_3ch = None
-    cached_mask_3ch      = None
-    cached_inv_3ch       = None
+    has_person  = False
 
     frame_delay_ms = max(1, int(1000.0 / cam_fps))  # waitKey delay in ms
     frame_interval = 1.0 / cam_fps                    # seconds per frame
@@ -624,36 +617,10 @@ def main():
                     person_mask = mask_buf.copy()
                 mask_ready.clear()
 
-                # Rebuild cached arrays only when mask changes
                 has_person = person_mask.any()
-                if has_person:
-                    alpha = person_mask.astype(np.float32) * (1.0 / 255.0)
-                    cached_alpha_3ch     = cv2.merge([alpha, alpha, alpha])
-                    cached_inv_alpha_3ch = 1.0 - cached_alpha_3ch
-                    cached_mask_3ch = cv2.merge(
-                        [person_mask, person_mask, person_mask])
-                    cached_inv_3ch  = cv2.bitwise_not(cached_mask_3ch)
 
-            # ── compositing ──────────────────────────────────────────────────
-            if has_person:
-                # Background: update only where there is NO person
-                diff = frame.astype(np.float32) - background
-                background += cached_inv_alpha_3ch * BG_LEARN * diff
-                np.clip(background, 0, 255, out=background)
-                bg = background.astype(np.uint8)
-
-                # Blend: person area → stored background, rest → live feed
-                output = cv2.add(
-                    cv2.multiply(bg,    cached_mask_3ch, scale=1.0/255,
-                                 dtype=cv2.CV_8U),
-                    cv2.multiply(frame, cached_inv_3ch,  scale=1.0/255,
-                                 dtype=cv2.CV_8U))
-            else:
-                # No person — learn background fully, pass-through live feed
-                background += BG_LEARN * (
-                    frame.astype(np.float32) - background)
-                np.clip(background, 0, 255, out=background)
-                output = frame
+            # ── pass-through (no compositing) ────────────────────────────────
+            output = frame
 
             if debug:
                 tint = frame.copy()
