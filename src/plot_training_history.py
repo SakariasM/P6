@@ -54,6 +54,75 @@ def get_key(entry: dict, key: str, prefix: str = "") -> float:
 # ---------------------------------------------------------------------------
 # Single-model plot
 # ---------------------------------------------------------------------------
+def _draw_panel(ax, panel, history, epochs, args, use_val, prefix, has_seg):
+    """Draw a single panel on the given axes."""
+    if panel == "iou":
+        iou_vals = [e.get("val_iou", 0.0) for e in history]
+        dice_vals = [e.get("val_dice", 0.0) for e in history]
+        ax.plot(epochs, iou_vals, marker="o", markersize=4,
+                color="tab:blue", label="Val IoU")
+        ax.plot(epochs, dice_vals, marker="s", markersize=4,
+                color="tab:green", label="Val Dice")
+        best_idx = max(range(len(iou_vals)), key=lambda i: iou_vals[i])
+        ax.annotate(f"Best IoU: {iou_vals[best_idx]:.4f} (ep {epochs[best_idx]})",
+                    xy=(epochs[best_idx], iou_vals[best_idx]),
+                    xytext=(10, -15), textcoords="offset points",
+                    fontsize=8, color="tab:blue",
+                    arrowprops=dict(arrowstyle="->", color="tab:blue", lw=0.8))
+        ax.set_ylabel("Score")
+        ax.set_title("Validation Segmentation Quality (IoU / Dice)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0.5, 1)
+
+    elif panel == "val_loss":
+        keys = [k for k in LOSS_KEYS if k != "segmentation" or has_seg]
+        if not args.all_losses:
+            keys = ["total"] + (["segmentation"] if has_seg else [])
+        for key in keys:
+            vals = [get_key(e, key, "val" if use_val else "") for e in history]
+            ax.plot(epochs, vals, marker="o", markersize=3,
+                    label=LOSS_LABELS[key])
+        ax.set_ylabel("Loss")
+        ax.set_title("Validation Loss")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        if args.log_scale:
+            ax.set_yscale("log")
+
+    elif panel == "train_loss":
+        keys = [k for k in LOSS_KEYS if k != "segmentation" or has_seg]
+        for key in keys:
+            vals = [get_key(e, key, prefix) for e in history]
+            ax.plot(epochs, vals, marker="o", markersize=3,
+                    label=LOSS_LABELS[key])
+        ax.set_ylabel("Loss")
+        ax.set_title("Training Loss")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        if args.log_scale:
+            ax.set_yscale("log")
+
+    elif panel == "lr":
+        lrs = [e.get("lr", 0.0) for e in history]
+        ax.plot(epochs, lrs, color="tab:gray", marker="o", markersize=3)
+        ax.set_ylabel("Learning Rate")
+        ax.set_title("Learning Rate Schedule")
+        ax.grid(True, alpha=0.3)
+
+    if args.weight_change:
+        ylo, yhi = ax.get_ylim()
+        for j, wc in enumerate(args.weight_change):
+            ax.axvline(x=wc, color="red", linestyle="--", linewidth=1, alpha=0.7)
+            frac = 0.95 if j % 2 == 0 else 0.82
+            y_pos = ylo + (yhi - ylo) * frac
+            ax.text(wc + 0.15, y_pos,
+                    "weight change", fontsize=7, color="red",
+                    va="top")
+
+    ax.set_xlabel("Epoch")
+
+
 def plot_single(history: list[dict], output: Path, args):
     use_val = has_val(history)
     prefix = "train" if use_val else ""
@@ -71,79 +140,26 @@ def plot_single(history: list[dict], output: Path, args):
     if args.all_losses:
         panels.append("lr")
 
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save each panel as a separate image
+    for panel in panels:
+        fig_single, ax = plt.subplots(1, 1, figsize=(10, 5))
+        _draw_panel(ax, panel, history, epochs, args, use_val, prefix, has_seg)
+        fig_single.tight_layout()
+        panel_path = output.with_stem(output.stem + f"_{panel}")
+        fig_single.savefig(panel_path, dpi=150)
+        plt.close(fig_single)
+
+    # Also save a combined figure
     ratios = [2 if p != "lr" else 1 for p in panels]
     fig, axes = plt.subplots(len(panels), 1, figsize=(10, 3.5 * len(panels)),
                               gridspec_kw={"height_ratios": ratios})
     if len(panels) == 1:
         axes = [axes]
-
     for ax, panel in zip(axes, panels):
-        if panel == "iou":
-            iou_vals = [e.get("val_iou", 0.0) for e in history]
-            dice_vals = [e.get("val_dice", 0.0) for e in history]
-            ax.plot(epochs, iou_vals, marker="o", markersize=4,
-                    color="tab:blue", label="Val IoU")
-            ax.plot(epochs, dice_vals, marker="s", markersize=4,
-                    color="tab:green", label="Val Dice")
-            best_idx = max(range(len(iou_vals)), key=lambda i: iou_vals[i])
-            ax.annotate(f"Best IoU: {iou_vals[best_idx]:.4f} (ep {epochs[best_idx]})",
-                        xy=(epochs[best_idx], iou_vals[best_idx]),
-                        xytext=(10, -15), textcoords="offset points",
-                        fontsize=8, color="tab:blue",
-                        arrowprops=dict(arrowstyle="->", color="tab:blue", lw=0.8))
-            ax.set_ylabel("Score")
-            ax.set_title("Validation Segmentation Quality (IoU / Dice)")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            ax.set_ylim(0.5, 1)
-
-        elif panel == "val_loss":
-            keys = [k for k in LOSS_KEYS if k != "segmentation" or has_seg]
-            if not args.all_losses:
-                keys = ["total"] + (["segmentation"] if has_seg else [])
-            for key in keys:
-                vals = [get_key(e, key, "val" if use_val else "") for e in history]
-                ax.plot(epochs, vals, marker="o", markersize=3,
-                        label=LOSS_LABELS[key])
-            ax.set_ylabel("Loss")
-            ax.set_title("Validation Loss")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            if args.log_scale:
-                ax.set_yscale("log")
-
-        elif panel == "train_loss":
-            keys = [k for k in LOSS_KEYS if k != "segmentation" or has_seg]
-            for key in keys:
-                vals = [get_key(e, key, prefix) for e in history]
-                ax.plot(epochs, vals, marker="o", markersize=3,
-                        label=LOSS_LABELS[key])
-            ax.set_ylabel("Loss")
-            ax.set_title("Training Loss")
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            if args.log_scale:
-                ax.set_yscale("log")
-
-        elif panel == "lr":
-            lrs = [e.get("lr", 0.0) for e in history]
-            ax.plot(epochs, lrs, color="tab:gray", marker="o", markersize=3)
-            ax.set_ylabel("Learning Rate")
-            ax.set_title("Learning Rate Schedule")
-            ax.grid(True, alpha=0.3)
-
-        if args.weight_change:
-            for wc in args.weight_change:
-                ax.axvline(x=wc, color="red", linestyle="--", linewidth=1, alpha=0.7)
-                if panel == panels[0]:
-                    ax.text(wc + 0.15, ax.get_ylim()[1] * 0.95,
-                            "weight change", fontsize=7, color="red",
-                            va="top")
-
-        ax.set_xlabel("Epoch")
-
+        _draw_panel(ax, panel, history, epochs, args, use_val, prefix, has_seg)
     plt.tight_layout()
-    output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=150)
     plt.close(fig)
 

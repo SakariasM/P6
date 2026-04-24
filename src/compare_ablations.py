@@ -109,7 +109,8 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
         has_any_data = True
 
         epochs = [e["epoch"] for e in history]
-        label = f"{name} ({', '.join(cfg['teacher_layers'])})"
+        layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
+        label = f"{name} ({', '.join(layers_display)})"
 
         # IoU and Dice
         if ax_iou is not None:
@@ -172,6 +173,32 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
     fig.savefig(output, dpi=150)
     plt.close(fig)
     print(f"\nSaved comparison plot to {output}")
+
+    # Save standalone segmentation loss plot
+    fig_seg, ax_seg2 = plt.subplots(1, 1, figsize=(14, 5))
+    for name, cfg in configs.items():
+        history = load_history(base_dir / name / "training_history.json")
+        if not history:
+            continue
+        epochs = [e["epoch"] for e in history]
+        layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
+        label = f"{name} ({', '.join(layers_display)})"
+        has_val = "val_total" in history[0]
+        if has_val:
+            val_segs = [e.get("val_segmentation", 0.0) for e in history]
+            if any(v > 0 for v in val_segs):
+                ax_seg2.plot(epochs, val_segs, marker="s", markersize=3,
+                             linestyle="--", label=label)
+    ax_seg2.set_xlabel("Epoch")
+    ax_seg2.set_ylabel("Loss")
+    ax_seg2.set_title("Validation Segmentation Loss by Layer Configuration")
+    ax_seg2.legend(fontsize=7, loc="upper right")
+    ax_seg2.grid(True, alpha=0.3)
+    fig_seg.tight_layout()
+    seg_path = output.with_stem(output.stem + "_seg_loss")
+    fig_seg.savefig(seg_path, dpi=150)
+    plt.close(fig_seg)
+    print(f"Saved segmentation loss plot to {seg_path}")
 
 
 def main():
