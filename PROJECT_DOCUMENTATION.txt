@@ -851,11 +851,12 @@ subsets to find the optimal combination.
   deep_neck1            model.9 + model.12                  Does neck help backbone?
   backbone_3            model.4 + model.6 + model.9         Full backbone (baseline)
   deep_plus_neck        model.9 + model.12 + model.15       Neck vs backbone
-  backbone_plus_neck1   model.4 + model.6 + model.9 + 12   4-layer combo
-  all_5_layers          all 5 layers                        Maximum knowledge
+  backbone_plus_neck1   model.4 + model.6 + model.9 + 12   4-layer combo (neck1)
+  backbone_plus_neck2   model.4 + model.6 + model.9 + 15   4-layer combo (neck2)
 
-Note: all_5_layers requires depth=5 (set automatically from config).
-All other configs use the default depth=4.
+All configs use depth=4. A 5-layer config was considered but excluded because
+depth=5 inflates the student to ~5.66M params (210% of the 2.7M teacher),
+defeating the purpose of knowledge distillation.
 
 11.3 Directory Structure
 ------------------------
@@ -1005,10 +1006,10 @@ srun --gres=gpu:0 --mem=8G --cpus-per-task=2 singularity exec \
     python src/compare_ablations.py \
       --base-dir /ceph/project/P6-Machine-Vision/P6/trained_models/ablation \
       --configs configs/ablation_configs.json \
-      --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png"
+      --output /ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison2.png"
 
 # Transfer plot to local machine
-scp ailab-vpn:/ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison.png ~/Dokumenter/GitHub/P6/
+scp ailab-vpn:/ceph/project/P6-Machine-Vision/P6/trained_models/ablation_comparison2.png ~/Dokumenter/GitHub/P6/
 
 # Override defaults (optional)
 EPOCHS=30 BATCH_SIZE=16 CONFIG=backbone_3 sbatch slurm/train_ablation.slurm
