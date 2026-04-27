@@ -1,11 +1,15 @@
 """
 Export trained student model to ONNX and TFLite formats.
 
-Usage:
+Single model:
     python src/export_model.py --checkpoint trained_models/best_model.pt
     python src/export_model.py --checkpoint trained_models/best_model.pt --img-size 320
     python src/export_model.py --checkpoint trained_models/best_model.pt --quantize
     python src/export_model.py --checkpoint trained_models/best_model.pt --onnx-only
+
+All ablation models:
+    python src/export_model.py --ablation-dir trained_models/ablation
+    python src/export_model.py --ablation-dir trained_models/ablation --onnx-only --img-size 320
 """
 import argparse
 import sys
@@ -93,9 +97,62 @@ def _quantize_tflite(input_tflite_path, output_path):
         return False
 
 
+def export_checkpoint(ckpt_path: Path, output_dir: Path, img_size: int,
+                      onnx_only: bool, quantize: bool, tag: str = ""):
+    """Export a single checkpoint to ONNX (and optionally TFLite)."""
+    print(f"Loading checkpoint: {ckpt_path}")
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+    state_dict = checkpoint["model_state_dict"]
+    needs_upcast = any(v.dtype == torch.float16 for v in state_dict.values())
+    if needs_upcast:
+        state_dict = {k: v.float() for k, v in state_dict.items()}
+
+    teacher_channels = checkpoint.get("teacher_channels", [256, 384, 256])
+    ckpt_args = checkpoint.get("args", {})
+    base_channels = ckpt_args.get("base_channels", 8)
+    depth = ckpt_args.get("depth", 4)
+
+    print(f"  Model config: base_channels={base_channels}, depth={depth}")
+    print(f"  Teacher channels: {teacher_channels}")
+
+    model = StudentSegmentation(
+        in_channels=3,
+        base_channels=base_channels,
+        depth=depth,
+        teacher_channels=teacher_channels,
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"  Parameters: {total_params:,}")
+
+    wrapper = InferenceWrapper(model)
+    wrapper.eval()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dummy = torch.randn(1, 3, img_size, img_size)
+
+    with torch.no_grad():
+        out = wrapper(dummy)
+    print(f"  Output shape: {out.shape}")
+
+    name = f"student_seg_{tag}_{img_size}" if tag else f"student_seg_{img_size}"
+    onnx_path = output_dir / f"{name}.onnx"
+    export_onnx(wrapper, dummy, onnx_path)
+
+    if onnx_only:
+        return
+
+    tflite_path = output_dir / f"{name}.tflite"
+    export_tflite(wrapper, dummy, tflite_path, quantize=quantize)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export student model to ONNX/TFLite")
-    parser.add_argument("--checkpoint", type=str, required=True,
+    parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to trained checkpoint (best_model.pt)")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Output directory (default: same as checkpoint)")
@@ -105,73 +162,49 @@ def main():
                         help="Apply INT8 quantization to TFLite")
     parser.add_argument("--onnx-only", action="store_true",
                         help="Only export ONNX, skip TFLite conversion")
+    parser.add_argument("--ablation-dir", type=str, default=None,
+                        help="Export all ablation models from this directory")
     args = parser.parse_args()
 
-    # Load checkpoint
-    ckpt_path = Path(args.checkpoint)
-    if not ckpt_path.exists():
-        print(f"ERROR: Checkpoint not found: {ckpt_path}")
-        sys.exit(1)
+    if args.ablation_dir:
+        ablation_dir = Path(args.ablation_dir)
+        if not ablation_dir.exists():
+            print(f"ERROR: Ablation directory not found: {ablation_dir}")
+            sys.exit(1)
 
-    print(f"Loading checkpoint: {ckpt_path}")
-    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        configs_found = 0
+        for subdir in sorted(ablation_dir.iterdir()):
+            if not subdir.is_dir():
+                continue
+            ckpt = subdir / "best_model.pt"
+            deploy_ckpt = list(subdir.glob("best_model_*.pt"))
+            chosen = deploy_ckpt[0] if deploy_ckpt else ckpt
+            if not chosen.exists():
+                print(f"Skipping {subdir.name}: no checkpoint found")
+                continue
 
-    teacher_channels = checkpoint.get("teacher_channels", [256, 384, 256])
-    ckpt_args = checkpoint.get("args", {})
-    base_channels = ckpt_args.get("base_channels", 8)
-    depth = ckpt_args.get("depth", 4)
+            configs_found += 1
+            config_name = subdir.name
+            out = Path(args.output_dir) if args.output_dir else subdir
+            print(f"\n{'='*60}")
+            print(f"Exporting: {config_name}")
+            print(f"{'='*60}")
+            export_checkpoint(chosen, out, args.img_size,
+                              args.onnx_only, args.quantize, tag=config_name)
 
-    print(f"Model config: base_channels={base_channels}, depth={depth}")
-    print(f"Teacher channels: {teacher_channels}")
+        print(f"\nDone. Exported {configs_found} ablation models.")
 
-    # Build model and load weights
-    model = StudentSegmentation(
-        in_channels=3,
-        base_channels=base_channels,
-        depth=depth,
-        teacher_channels=teacher_channels,
-    )
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Parameters: {total_params:,}")
-
-    # Wrap for inference (drops distill_info)
-    wrapper = InferenceWrapper(model)
-    wrapper.eval()
-
-    # Output directory
-    output_dir = Path(args.output_dir) if args.output_dir else ckpt_path.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Dummy input for tracing
-    dummy = torch.randn(1, 3, args.img_size, args.img_size)
-
-    # Verify forward pass
-    with torch.no_grad():
-        out = wrapper(dummy)
-    print(f"Output shape: {out.shape} (expected [1, 1, {args.img_size}, {args.img_size}])")
-
-    # Export ONNX
-    onnx_path = output_dir / f"student_seg_{args.img_size}.onnx"
-    export_onnx(wrapper, dummy, onnx_path)
-
-    if args.onnx_only:
-        print("\nDone (ONNX only).")
-        return
-
-    # Export TFLite
-    tflite_path = output_dir / f"student_seg_{args.img_size}.tflite"
-    success = export_tflite(wrapper, dummy, tflite_path, quantize=args.quantize)
-
-    if success:
-        print(f"\nExport complete:")
-        print(f"  ONNX:   {onnx_path}")
-        print(f"  TFLite: {tflite_path}")
+    elif args.checkpoint:
+        ckpt_path = Path(args.checkpoint)
+        if not ckpt_path.exists():
+            print(f"ERROR: Checkpoint not found: {ckpt_path}")
+            sys.exit(1)
+        output_dir = Path(args.output_dir) if args.output_dir else ckpt_path.parent
+        export_checkpoint(ckpt_path, output_dir, args.img_size,
+                          args.onnx_only, args.quantize)
     else:
-        print(f"\nONNX export complete: {onnx_path}")
-        print("TFLite conversion failed — see errors above.")
+        print("ERROR: Provide either --checkpoint or --ablation-dir")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -609,12 +609,12 @@ def main(args):
                 'teacher_layer_names': teacher_layer_names,
                 'args': vars(args),
             }, output_dir / 'best_model.pt')
-            # Lightweight deploy version (float16, weights only, ~3 MB)
+            config_tag = output_dir.name
             torch.save({
                 'model_state_dict': {k: v.half() for k, v in raw_state.items()},
                 'teacher_channels': teacher_channels,
                 'args': vars(args),
-            }, output_dir / 'best_model_deploy.pt')
+            }, output_dir / f'best_model_{config_tag}.pt')
             iou_str = f", IoU: {best_iou:.4f}" if best_iou > 0 else ""
             print(f"  -> Saved best model (val_loss: {best_loss:.4f}{iou_str})")
         else:
