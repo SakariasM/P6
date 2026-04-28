@@ -4,13 +4,13 @@ U-Net segmentation student with CBAM attention and distillation hooks.
 Input: [B, 3, H, W] RGB image
 Output: [B, 1, H, W] person segmentation mask (sigmoid)
 
-Architecture (depth=4, base_channels=32):
+Architecture (depth=4, base_channels=8):
 
-  initial  -> [B,  32, H,   W  ]
-  enc[0]   -> [B,  64, H/2, W/2]  + CBAM
-  enc[1]   -> [B, 128, H/4, W/4]  + CBAM
-  enc[2]   -> [B, 256, H/8, W/8]  + CBAM
-  enc[3]   -> [B, 512, H/16,W/16] + CBAM
+  initial  -> [B,   8, H,   W  ]
+  enc[0]   -> [B,  16, H/2, W/2]  + CBAM
+  enc[1]   -> [B,  32, H/4, W/4]  + CBAM
+  enc[2]   -> [B,  64, H/8, W/8]  + CBAM
+  enc[3]   -> [B, 128, H/16,W/16] + CBAM
   bottleneck (dilated residuals)
   dec[0..3] with skip connections
   output   -> [B, 1, H, W]  (Sigmoid)
@@ -110,7 +110,7 @@ class StudentSegmentation(nn.Module):
         distill_info: dict with "features", "attention_maps", "projected"
     """
 
-    def __init__(self, in_channels=3, base_channels=32, depth=4,
+    def __init__(self, in_channels=3, base_channels=8, depth=4,
                  teacher_channels: Optional[List[int]] = None,
                  use_cbam: bool = True, depthwise: bool = False,
                  bottleneck_blocks: int = 3):
@@ -227,12 +227,12 @@ class StudentSegmentation(nn.Module):
 # ---------------------------------------------------------------------------
 
 ABLATION_VARIANTS = {
-    "baseline": dict(base_channels=32, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
-    "no_cbam": dict(base_channels=32, depth=4, use_cbam=False, depthwise=False, bottleneck_blocks=3),
-    "depthwise": dict(base_channels=32, depth=4, use_cbam=True, depthwise=True, bottleneck_blocks=3),
-    "deep_bottleneck": dict(base_channels=32, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=5),
-    "shallow": dict(base_channels=32, depth=3, use_cbam=True, depthwise=False, bottleneck_blocks=3),
-    "wide": dict(base_channels=48, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
+    "baseline": dict(base_channels=8, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
+    "no_cbam": dict(base_channels=8, depth=4, use_cbam=False, depthwise=False, bottleneck_blocks=3),
+    "depthwise": dict(base_channels=8, depth=4, use_cbam=True, depthwise=True, bottleneck_blocks=3),
+    "deep_bottleneck": dict(base_channels=8, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=5),
+    "shallow": dict(base_channels=8, depth=3, use_cbam=True, depthwise=False, bottleneck_blocks=3),
+    "wide": dict(base_channels=12, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
 }
 
 

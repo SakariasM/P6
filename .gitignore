@@ -14,6 +14,7 @@ share/
 etc/
 trained_models/
 test_data/*
+ablation comparisons/*
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints
