@@ -21,7 +21,7 @@ def run():
         for i, n in enumerate(names):
             f.write('  ' + str(i) + ': ' + n + '\n')
 
-    model = YOLO('yolo26n-seg.pt')
+    model = YOLO('trained_models/best_model.pt')
     print('Korer val() pa COCO val2017...')
     results = model.val(
         data=str(yaml_path),
