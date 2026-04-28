@@ -201,6 +201,81 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
     print(f"Saved segmentation loss plot to {seg_path}")
 
 
+HIGHRES_LAYERS = {"model.4", "model.15"}
+LOWRES_LAYERS = {"model.9"}
+
+GROUPINGS = {
+    "by_resolution": {
+        "title": "Validation Segmentation Loss — Grouped by Spatial Resolution",
+        "groups": {
+            "High-res (80×80)": lambda layers: any(l in HIGHRES_LAYERS for l in layers) and not any(l in LOWRES_LAYERS for l in layers),
+            "Low-res (20×20)": lambda layers: any(l in LOWRES_LAYERS for l in layers) and not any(l in HIGHRES_LAYERS for l in layers),
+            "Mixed resolutions": lambda layers: any(l in HIGHRES_LAYERS for l in layers) and any(l in LOWRES_LAYERS for l in layers),
+        },
+    },
+    "by_source": {
+        "title": "Validation Segmentation Loss — Backbone vs Neck",
+        "groups": {
+            "Backbone only": lambda layers: all(l in {"model.4", "model.6", "model.9"} for l in layers),
+            "Includes neck": lambda layers: any(l in {"model.12", "model.15"} for l in layers),
+        },
+    },
+    "by_count": {
+        "title": "Validation Segmentation Loss — By Layer Count",
+        "groups": {
+            "1 layer": lambda layers: len(layers) == 1,
+            "2 layers": lambda layers: len(layers) == 2,
+            "3–4 layers": lambda layers: len(layers) >= 3,
+        },
+    },
+}
+
+
+def plot_grouped(configs: dict[str, dict], base_dir: Path, output: Path):
+    """Plot segmentation loss grouped by different taxonomies."""
+    for group_key, group_def in GROUPINGS.items():
+        fig, axes = plt.subplots(1, len(group_def["groups"]),
+                                  figsize=(7 * len(group_def["groups"]), 5),
+                                  sharey=True)
+        if len(group_def["groups"]) == 1:
+            axes = [axes]
+
+        colors = plt.cm.tab10.colors
+
+        for ax, (group_name, match_fn) in zip(axes, group_def["groups"].items()):
+            color_idx = 0
+            for name, cfg in configs.items():
+                layers = cfg["teacher_layers"]
+                if not match_fn(layers):
+                    continue
+                history = load_history(base_dir / name / "training_history.json")
+                if not history or "val_total" not in history[0]:
+                    continue
+                epochs = [e["epoch"] for e in history]
+                val_segs = [e.get("val_segmentation", 0.0) for e in history]
+                if not any(v > 0 for v in val_segs):
+                    continue
+                layers_display = [l.replace("model.", "block.") for l in layers]
+                label = f"{name} ({', '.join(layers_display)})"
+                ax.plot(epochs, val_segs, marker="s", markersize=3,
+                        linestyle="--", color=colors[color_idx % len(colors)],
+                        label=label)
+                color_idx += 1
+
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+            ax.set_title(group_name)
+            ax.legend(fontsize=7, loc="upper right")
+            ax.grid(True, alpha=0.3)
+
+        fig.suptitle(group_def["title"], fontsize=12, y=1.02)
+        fig.tight_layout()
+        group_path = output.with_stem(output.stem + f"_{group_key}")
+        fig.savefig(group_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved grouped plot to {group_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare ablation training results")
     parser.add_argument("--base-dir", type=Path, required=True,
@@ -219,6 +294,7 @@ def main():
 
     print_comparison_table(configs, args.base_dir)
     plot_comparison(configs, args.base_dir, args.output)
+    plot_grouped(configs, args.base_dir, args.output)
 
 
 if __name__ == "__main__":
