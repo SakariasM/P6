@@ -44,3 +44,12 @@ PROJECT_DOCUMENTATION.txt
 
 # TensorBoard runs (keep folder, ignore contents)
 runs/**
+.venv/
+datasets/
+tmp/
+__pycache__/
+*.pyc
+results/ablation_predictions/
+results/hybrid_predictions/
+benchmark_results.json
+coco_benchmark_results.json
