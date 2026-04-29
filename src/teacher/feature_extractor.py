@@ -102,7 +102,7 @@ class YOLOFeatureExtractor:
             model_layers = self.pytorch_model.model
             # Common feature extraction points in YOLO backbone
             # Adjust based on your specific YOLO version
-            candidate_indices = [4, 6, 9, 12, 15]  # Common backbone output indices
+            candidate_indices = [4, 6, 9, 13, 16]
 
             for idx in candidate_indices:
                 if idx < len(model_layers):

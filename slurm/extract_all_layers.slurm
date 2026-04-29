@@ -9,7 +9,7 @@
 #SBATCH --time=12:00:00
 
 # Extract teacher features from ALL 5 candidate YOLO backbone+neck layers.
-# Produces chunks with model.4, model.6, model.9, model.12, model.15 features.
+# Produces chunks with model.4, model.6, model.9, model.13, model.16 features.
 # These chunks are shared by all ablation training configs.
 #
 # Usage: sbatch slurm/extract_all_layers.slurm
@@ -60,7 +60,7 @@ singularity exec --nv \
             --batch-size ${BATCH} \
             --person-only \
             --checkpoint-interval 500 \
-            --feature-layers model.4 model.6 model.9 model.12 model.15 \
+            --feature-layers model.4 model.6 model.9 model.13 model.16 \
             --worker-id ${WORKER_ID} \
             --num-workers ${NUM_WORKERS}
 

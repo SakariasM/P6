@@ -20,28 +20,30 @@
 #
 # Available configs (see configs/ablation_configs.json):
 #
-#   SINGLES:
-#     shallow_only        model.4                (P3, 80x80)
-#     mid_only            model.6                (P4, 40x40)
-#     deep_only           model.9                (P5, 20x20)
-#     neck1_only          model.12               (neck, 40x40)
-#     neck2_only          model.15               (neck, 80x80)
+#   SINGLES (backbone):
+#     shallow_only        model.4                (C3k2, P3, 80x80)
+#     mid_only            model.6                (C3k2, P4, 40x40)
+#     deep_only           model.9                (SPPF, P5, 20x20)
+#
+#   SINGLES (neck C3k2):
+#     neck1_c3k2_only     model.13               (C3k2 after concat, 40x40)
+#     neck2_c3k2_only     model.16               (C3k2 after concat, 80x80)
 #
 #   PAIRS:
 #     shallow_deep        model.4 + model.9      (P3+P5)
-#     shallow_mid         model.4 + model.6      (P3+P4)
 #     mid_deep            model.6 + model.9      (P4+P5)
-#     deep_neck1          model.9 + model.12     (P5+neck)
-#     shallow_neck2       model.4 + model.15     (extreme spread)
+#     deep_neck1          model.9 + model.12     (P5+neck concat)
 #
 #   TRIPLES:
 #     backbone_3          model.4+6+9            (full backbone, default)
-#     deep_plus_neck      model.9+12+15          (deep+neck)
-#     spread_3            model.4+9+15           (spread)
+#     deep_plus_neck_c3k2 model.9+13+16          (deep+neck C3k2)
 #
 #   LARGER (4 layers):
-#     backbone_plus_neck1 model.4+6+9+12         (backbone + neck1)
-#     backbone_plus_neck2 model.4+6+9+15         (backbone + neck2)
+#     backbone_plus_neck1_c3k2 model.4+6+9+13    (backbone + neck1 C3k2)
+#     backbone_plus_neck2_c3k2 model.4+6+9+16    (backbone + neck2 C3k2)
+#
+#   DEPTH=5 (5 layers):
+#     all_5_c3k2          model.4+6+9+13+16      (all C3k2, ~5.7M params)
 #
 # Supports auto-resume: re-submitting the same CONFIG will pick up
 # from the latest checkpoint.
