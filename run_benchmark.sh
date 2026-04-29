@@ -16,4 +16,4 @@ $PYTHON $PROJECT/benchmark_accuracy.py \
     --types   teacher student \
     --data    $PROJECT/data/data.yaml \
     --imgsz   640 --batch 16 --device cuda --split val \
-    --out     $PROJECT/benchmark_results.json
+    --out     $PROJECT/results/benchmark_results.json
