@@ -11,7 +11,7 @@ PROJECT=/ceph/project/P6-Machine-Vision/P6
 
 mkdir -p $PROJECT/logs
 
-$PYTHON $PROJECT/benchmark_accuracy.py \
+$PYTHON $PROJECT/src/benchmark_accuracy.py \
     --models  $PROJECT/trained_models/best_model.pt $PROJECT/trained_models/best_model_deploy.pt \
     --types   teacher student \
     --data    $PROJECT/data/data.yaml \
