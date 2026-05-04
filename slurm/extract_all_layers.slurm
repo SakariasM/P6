@@ -45,7 +45,7 @@ singularity exec --nv \
         source /scratch/venv/bin/activate
         cd /scratch/project
         export PYTHONPATH=/scratch/project/src
-        export TMPDIR=/ceph/project/P6-Machine-Vision/P6/tmp/extract_all_\${SLURM_ARRAY_TASK_ID}
+        export TMPDIR=/tmp/ext_\${SLURM_JOB_ID}
         mkdir -p \"\${TMPDIR}\"
 
         nvidia-smi
