@@ -113,7 +113,8 @@ class StudentSegmentation(nn.Module):
     def __init__(self, in_channels=3, base_channels=8, depth=4,
                  teacher_channels: Optional[List[int]] = None,
                  use_cbam: bool = True, depthwise: bool = False,
-                 bottleneck_blocks: int = 3):
+                 bottleneck_blocks: int = 3,
+                 cbam_levels: Optional[List[int]] = None):
         super().__init__()
 
         if teacher_channels is None:
@@ -122,6 +123,14 @@ class StudentSegmentation(nn.Module):
         self.depth = depth
         self.teacher_channels = teacher_channels
         self.use_cbam = use_cbam
+
+        # Per-level CBAM enable flags. If cbam_levels is provided it overrides
+        # use_cbam and lists the encoder indices that keep CBAM. Otherwise fall
+        # back to use_cbam for all levels.
+        if cbam_levels is None:
+            self._cbam_enabled = [use_cbam] * depth
+        else:
+            self._cbam_enabled = [i in cbam_levels for i in range(depth)]
 
         # Encoder channels: [64, 128, 256, 512] for base=32, depth=4
         self._enc_channels = [base_channels * (2 ** i) for i in range(1, depth + 1)]
@@ -140,7 +149,7 @@ class StudentSegmentation(nn.Module):
         for i in range(depth):
             enc_out = self._enc_channels[i]
             self.encoders.append(DownBlock(enc_in, enc_out, depthwise=depthwise))
-            self.cbams.append(CBAM(enc_out) if use_cbam else nn.Identity())
+            self.cbams.append(CBAM(enc_out) if self._cbam_enabled[i] else nn.Identity())
             enc_in = enc_out
 
         # Bottleneck
@@ -189,15 +198,14 @@ class StudentSegmentation(nn.Module):
         for i in range(self.depth):
             skips.append(x)
             x = self.encoders[i](x)
-            if self.use_cbam:
+            if self._cbam_enabled[i]:
                 sp_map, x = self.cbams[i](x)
-                attn_maps.append(sp_map)
             else:
                 # Synthesise a spatial attention map for distillation compatibility
                 avg_f = x.mean(dim=1, keepdim=True)
                 max_f = x.max(dim=1, keepdim=True)[0]
                 sp_map = torch.sigmoid(avg_f + max_f)
-                attn_maps.append(sp_map)
+            attn_maps.append(sp_map)
             enc_features.append(x)
 
         # Bottleneck
@@ -229,6 +237,7 @@ class StudentSegmentation(nn.Module):
 ABLATION_VARIANTS = {
     "baseline": dict(base_channels=8, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3),
     "no_cbam": dict(base_channels=8, depth=4, use_cbam=False, depthwise=False, bottleneck_blocks=3),
+    "no_cbam_enc0": dict(base_channels=8, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=3, cbam_levels=[1, 2, 3]),
     "depthwise": dict(base_channels=8, depth=4, use_cbam=True, depthwise=True, bottleneck_blocks=3),
     "deep_bottleneck": dict(base_channels=8, depth=4, use_cbam=True, depthwise=False, bottleneck_blocks=5),
     "shallow": dict(base_channels=8, depth=3, use_cbam=True, depthwise=False, bottleneck_blocks=3),

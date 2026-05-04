@@ -7,9 +7,18 @@
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 
-# Train a student model with a specific teacher layer configuration.
-# Each config trains from scratch and saves to its own directory:
-#   trained_models/ablation/<config_name>/
+# Fine-tune a student model with CBAM disabled at encoder 0 (no_cbam_enc0
+# variant) starting from the baseline checkpoint for the given teacher-layer
+# CONFIG. Output goes to its own directory so the original baseline is
+# preserved:
+#   trained_models/ablation/<config_name>/                 <- baseline (input)
+#   trained_models/ablation/<config_name>_no_cbam_enc0/    <- fine-tune (output)
+#
+# Defaults are tuned for fine-tuning, not from-scratch training:
+#   EPOCHS=5, LEARNING_RATE=2e-5
+#
+# Override the baseline checkpoint path via LOAD_WEIGHTS=... if the default
+# (${BASE_OUT}/${CONFIG}/best_model.pt) is not where you keep it.
 #
 # ---------------------------------------------------------------
 # USAGE — pick your config name and submit:
@@ -75,13 +84,16 @@ PROJECT_DIR="${SLURM_SUBMIT_DIR}"
 PRED_DIR="${PRED_DIR:-/ceph/project/P6-Machine-Vision/P6/results/ablation_predictions}"
 IMAGE_ROOT="${DATA_DIR:-/ceph/project/P6-Machine-Vision/P6/data/open-images-v7/train/data}"
 BASE_OUT="/ceph/project/P6-Machine-Vision/P6/trained_models/ablation"
-EPOCHS="${EPOCHS:-50}"
+EPOCHS="${EPOCHS:-5}"
 BATCH="${BATCH_SIZE:-8}"
-LR="${LEARNING_RATE:-1e-4}"
+LR="${LEARNING_RATE:-2e-5}"
 BASE_CH="${BASE_CHANNELS:-8}"
 DEFAULT_DEPTH="${DEPTH:-4}"
 IMG_SIZE="${IMG_SIZE:-640}"
 WORKERS="${NUM_WORKERS:-8}"
+# Optional override: path to baseline checkpoint to fine-tune from.
+# Default resolves to ${BASE_OUT}/${CONFIG}/best_model.pt below.
+LOAD_WEIGHTS_OVERRIDE="${LOAD_WEIGHTS:-}"
 
 echo "=== Ablation Training: ${CONFIG} ==="
 echo "Node: $(hostname)"
@@ -122,31 +134,47 @@ print(c.get('description', ''))
         DEPTH_OVERRIDE=\$(echo \"\${PARSED}\" | sed -n '2p')
         DESCRIPTION=\$(echo \"\${PARSED}\" | sed -n '3p')
 
-        OUT_DIR='${BASE_OUT}/${CONFIG}'
+        BASELINE_DIR='${BASE_OUT}/${CONFIG}'
+        OUT_DIR='${BASE_OUT}/${CONFIG}_no_cbam_enc0'
         mkdir -p \"\${OUT_DIR}\"
 
-        echo \"Config:  ${CONFIG}\"
-        echo \"Desc:    \${DESCRIPTION}\"
-        echo \"Layers:  \${TEACHER_LAYERS}\"
-        echo \"Depth:   \${DEPTH_OVERRIDE}\"
-        echo \"Output:  \${OUT_DIR}\"
-        echo \"Epochs:  ${EPOCHS}\"
-        echo \"Batch:   ${BATCH}\"
-        echo \"LR:      ${LR}\"
+        # Resolve baseline checkpoint path for the initial fine-tune load.
+        BASELINE_CKPT='${LOAD_WEIGHTS_OVERRIDE}'
+        if [ -z \"\${BASELINE_CKPT}\" ]; then
+            BASELINE_CKPT=\"\${BASELINE_DIR}/best_model.pt\"
+        fi
+
+        echo \"Config:    ${CONFIG}\"
+        echo \"Desc:      \${DESCRIPTION}\"
+        echo \"Layers:    \${TEACHER_LAYERS}\"
+        echo \"Depth:     \${DEPTH_OVERRIDE}\"
+        echo \"Mode:      no_cbam_enc0 fine-tune (CBAM disabled at encoder 0)\"
+        echo \"Baseline:  \${BASELINE_CKPT}\"
+        echo \"Output:    \${OUT_DIR}\"
+        echo \"Epochs:    ${EPOCHS}\"
+        echo \"Batch:     ${BATCH}\"
+        echo \"LR:        ${LR}\"
         echo \"\"
 
-        # Resume from latest checkpoint if exists
-        RESUME_ARG=''
+        # Pick init source: resume from output dir if a fine-tune is already
+        # in progress; otherwise load weights from the baseline checkpoint.
+        # --resume and --load-weights are mutually exclusive in the trainer.
+        INIT_ARG=''
         MID_CKPT=\"\${OUT_DIR}/checkpoint_mid_epoch.pt\"
         LATEST_CKPT=\$(find \"\${OUT_DIR}\" -name 'checkpoint_epoch_*.pt' 2>/dev/null | sort -V | tail -1)
         if [ -f \"\${MID_CKPT}\" ]; then
-            echo \"Resuming from mid-epoch checkpoint\"
-            RESUME_ARG=\"--resume \${MID_CKPT}\"
+            echo \"Resuming fine-tune from mid-epoch checkpoint\"
+            INIT_ARG=\"--resume \${MID_CKPT}\"
         elif [ -n \"\${LATEST_CKPT}\" ]; then
-            echo \"Resuming from: \${LATEST_CKPT}\"
-            RESUME_ARG=\"--resume \${LATEST_CKPT}\"
+            echo \"Resuming fine-tune from: \${LATEST_CKPT}\"
+            INIT_ARG=\"--resume \${LATEST_CKPT}\"
+        elif [ -f \"\${BASELINE_CKPT}\" ]; then
+            echo \"Initializing fine-tune from baseline weights (strict=False)\"
+            INIT_ARG=\"--load-weights \${BASELINE_CKPT}\"
         else
-            echo \"Starting fresh\"
+            echo \"ERROR: no baseline checkpoint at \${BASELINE_CKPT} and no fine-tune in progress.\" >&2
+            echo \"       Train the baseline first or pass LOAD_WEIGHTS=...\" >&2
+            exit 1
         fi
 
         echo ''
@@ -173,7 +201,8 @@ print(c.get('description', ''))
             --patience 5 \
             --augment \
             --teacher-layers \${TEACHER_LAYERS} \
-            \${RESUME_ARG}
+            --cbam-levels 1 2 3 \
+            \${INIT_ARG}
 
         echo ''
         echo '=== ${CONFIG} training complete ==='
