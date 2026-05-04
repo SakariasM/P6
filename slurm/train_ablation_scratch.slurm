@@ -1,60 +1,41 @@
 #!/bin/bash
-#SBATCH --job-name=kd-ablation
-#SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/ablation_%j.out
-#SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/ablation_%j.err
+#SBATCH --job-name=kd-ablation-scratch
+#SBATCH --output=/ceph/project/P6-Machine-Vision/P6/logs/ablation_scratch_%j.out
+#SBATCH --error=/ceph/project/P6-Machine-Vision/P6/logs/ablation_scratch_%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
 
-# Train a student model with a specific teacher layer configuration.
-# Each config trains from scratch and saves to its own directory:
-#   trained_models/ablation/<config_name>/
+# From-scratch training of the no_cbam_enc0 student variant for a given
+# teacher-layer CONFIG. Use this for the report's ablation table — it gives
+# a compute-parity comparison against the original full-CBAM baseline trained
+# by an earlier run of train_ablation.slurm (or the equivalent scratch run).
+#
+# Output:
+#   trained_models/ablation/<config_name>_no_cbam_enc0_scratch/
+#
+# Defaults match the original baseline training schedule (EPOCHS=50,
+# LR=1e-4) so the two numbers are directly comparable.
 #
 # ---------------------------------------------------------------
-# USAGE — pick your config name and submit:
+# USAGE:
 #
-#   CONFIG=shallow_only   sbatch slurm/train_ablation.slurm
-#   CONFIG=backbone_3     sbatch slurm/train_ablation.slurm
-#   CONFIG=backbone_plus_neck2  sbatch slurm/train_ablation.slurm
+#   CONFIG=backbone_3       sbatch slurm/train_ablation_scratch.slurm
+#   CONFIG=shallow_only     sbatch slurm/train_ablation_scratch.slurm
 #
-# Available configs (see configs/ablation_configs.json):
+# Available CONFIG values match configs/ablation_configs.json — see the
+# header comment in slurm/train_ablation.slurm for the full list.
 #
-#   SINGLES (backbone):
-#     shallow_only        model.4                (C3k2, P3, 80x80)
-#     mid_only            model.6                (C3k2, P4, 40x40)
-#     deep_only           model.9                (SPPF, P5, 20x20)
-#
-#   SINGLES (neck C3k2):
-#     neck1_c3k2_only     model.13               (C3k2 after concat, 40x40)
-#     neck2_c3k2_only     model.16               (C3k2 after concat, 80x80)
-#
-#   PAIRS:
-#     shallow_deep        model.4 + model.9      (P3+P5)
-#     mid_deep            model.6 + model.9      (P4+P5)
-#     deep_neck1          model.9 + model.12     (P5+neck concat)
-#
-#   TRIPLES:
-#     backbone_3          model.4+6+9            (full backbone, default)
-#     deep_plus_neck_c3k2 model.9+13+16          (deep+neck C3k2)
-#
-#   LARGER (4 layers):
-#     backbone_plus_neck1_c3k2 model.4+6+9+13    (backbone + neck1 C3k2)
-#     backbone_plus_neck2_c3k2 model.4+6+9+16    (backbone + neck2 C3k2)
-#
-#   DEPTH=5 (5 layers):
-#     all_5_c3k2          model.4+6+9+13+16      (all C3k2, ~5.7M params)
-#
-# Supports auto-resume: re-submitting the same CONFIG will pick up
-# from the latest checkpoint.
+# Supports auto-resume: re-submitting the same CONFIG picks up from the
+# latest checkpoint inside the scratch output dir.
 # ---------------------------------------------------------------
 
 set -euo pipefail
 
-# CONFIG must be set
 if [ -z "${CONFIG:-}" ]; then
     echo "ERROR: CONFIG not set."
-    echo "Usage: CONFIG=shallow_only sbatch slurm/train_ablation.slurm"
+    echo "Usage: CONFIG=backbone_3 sbatch slurm/train_ablation_scratch.slurm"
     echo ""
     echo "Available configs:"
     python3 -c "
@@ -83,7 +64,7 @@ DEFAULT_DEPTH="${DEPTH:-4}"
 IMG_SIZE="${IMG_SIZE:-640}"
 WORKERS="${NUM_WORKERS:-8}"
 
-echo "=== Ablation Training: ${CONFIG} ==="
+echo "=== Ablation Training (scratch, no_cbam_enc0): ${CONFIG} ==="
 echo "Node: $(hostname)"
 echo "Job ID: ${SLURM_JOB_ID}"
 echo ""
@@ -97,12 +78,11 @@ singularity exec --nv \
         source /scratch/venv/bin/activate
         cd /scratch/project
         export PYTHONPATH=/scratch/project/src
-        export TMPDIR=/tmp/abl_\${SLURM_JOB_ID}
+        export TMPDIR=/tmp/abl_scratch_\${SLURM_JOB_ID}
         mkdir -p \"\${TMPDIR}\"
 
         nvidia-smi
 
-        # Read config
         CONFIG_FILE='configs/ablation_configs.json'
         PARSED=\$(python3 -c \"
 import json, sys
@@ -122,20 +102,21 @@ print(c.get('description', ''))
         DEPTH_OVERRIDE=\$(echo \"\${PARSED}\" | sed -n '2p')
         DESCRIPTION=\$(echo \"\${PARSED}\" | sed -n '3p')
 
-        OUT_DIR='${BASE_OUT}/${CONFIG}'
+        OUT_DIR='${BASE_OUT}/${CONFIG}_no_cbam_enc0_scratch'
         mkdir -p \"\${OUT_DIR}\"
 
-        echo \"Config:  ${CONFIG}\"
-        echo \"Desc:    \${DESCRIPTION}\"
-        echo \"Layers:  \${TEACHER_LAYERS}\"
-        echo \"Depth:   \${DEPTH_OVERRIDE}\"
-        echo \"Output:  \${OUT_DIR}\"
-        echo \"Epochs:  ${EPOCHS}\"
-        echo \"Batch:   ${BATCH}\"
-        echo \"LR:      ${LR}\"
+        echo \"Config:    ${CONFIG}\"
+        echo \"Desc:      \${DESCRIPTION}\"
+        echo \"Layers:    \${TEACHER_LAYERS}\"
+        echo \"Depth:     \${DEPTH_OVERRIDE}\"
+        echo \"Mode:      from-scratch, no_cbam_enc0 (CBAM disabled at encoder 0)\"
+        echo \"Output:    \${OUT_DIR}\"
+        echo \"Epochs:    ${EPOCHS}\"
+        echo \"Batch:     ${BATCH}\"
+        echo \"LR:        ${LR}\"
         echo \"\"
 
-        # Resume from latest checkpoint if exists
+        # Auto-resume from latest checkpoint inside the scratch output dir.
         RESUME_ARG=''
         MID_CKPT=\"\${OUT_DIR}/checkpoint_mid_epoch.pt\"
         LATEST_CKPT=\$(find \"\${OUT_DIR}\" -name 'checkpoint_epoch_*.pt' 2>/dev/null | sort -V | tail -1)
@@ -173,9 +154,10 @@ print(c.get('description', ''))
             --patience 5 \
             --augment \
             --teacher-layers \${TEACHER_LAYERS} \
+            --cbam-levels 1 2 3 \
             \${RESUME_ARG}
 
         echo ''
-        echo '=== ${CONFIG} training complete ==='
+        echo '=== ${CONFIG} (scratch, no_cbam_enc0) training complete ==='
         ls -lh \"\${OUT_DIR}/\"
     "
