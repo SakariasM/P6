@@ -24,17 +24,19 @@ import os
 import sys
 import time
 import multiprocessing as mp
+import queue
+import threading
 import numpy as np
 from multiprocessing import shared_memory
 
 # ── config ────────────────────────────────────────────────────────────────────
-SOURCE         = 0                # webcam index, or path to a video file
-MASK_THRESHOLD = 0.7              # segmentation confidence (0–1, lower = more aggressive)
-MASK_DILATE    = 10               # expand mask outward to cover person edges
+SOURCE         = "udp://@:1234"                # webcam index, or path to a video file
+MASK_THRESHOLD = 0.1             # segmentation confidence (0–1, lower = more aggressive)
+MASK_DILATE    = 1               # expand mask outward to cover person edges
 MASK_BLUR      = 1                # feather mask edges for smooth blending (must be odd)
 BG_LEARN       = 0.02             # background learning rate (higher = adapts faster)
-MASK_EDGE_PAD  = 50               # if mask is within this many px of top/bottom, extend to edge
-MODEL          = "student_seg_320"    # model name — auto-downloads and exports if missing
+MASK_EDGE_PAD  = 10               # if mask is within this many px of top/bottom, extend to edge
+MODEL          = "yolo26n-seg"    # model name — auto-downloads and exports if missing
                                   # use "selfie_segmenter" for the lightweight TFLite model
 MODEL_IMGSZ    = 320              # inference resolution used when exporting YOLO models
 MODEL_PATH     = f"models/{MODEL}/{MODEL}_float32.tflite"
@@ -146,23 +148,82 @@ def frame_grabber(source, shm_name, shape, frame_lock, stop_event, cam_fps):
     buf = _np_from_shm(shm, shape)
 
     frame_interval = 1.0 / max(cam_fps, 1.0)
+    is_udp = isinstance(source, str) and source.startswith("udp://")
+    INITIAL_TIMEOUT = 30.0
+    STREAM_TIMEOUT  = 0.1
 
-    while not stop_event.is_set():
-        t_start = time.time()
-        ret, frame = cap.read()
-        if not ret:
+    if is_udp:
+        frame_q = queue.Queue(maxsize=2)
+
+        def _reader():
+            while not stop_event.is_set():
+                ret, frame = cap.read()
+                try:
+                    frame_q.put((ret, frame), timeout=1.0)
+                except queue.Full:
+                    pass
+                if not ret:
+                    break
+
+        threading.Thread(target=_reader, daemon=True).start()
+
+        try:
+            ret, frame = frame_q.get(timeout=INITIAL_TIMEOUT)
+        except queue.Empty:
+            print("[grabber] No stream after 30s — giving up")
             stop_event.set()
-            break
+            cap.release()
+            shm.close()
+            return
+
+        if not ret:
+            print("[grabber] Stream ended before first frame")
+            stop_event.set()
+            cap.release()
+            shm.close()
+            return
+
+        print("[grabber] Stream connected")
         if frame.shape[:2] != shape[:2]:
             frame = cv2.resize(frame, (shape[1], shape[0]))
         with frame_lock:
             np.copyto(buf, frame)
 
-        # Rate-limit to camera FPS
-        elapsed = time.time() - t_start
-        sleep_time = frame_interval - elapsed
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+        while not stop_event.is_set():
+            t_start = time.time()
+            try:
+                ret, frame = frame_q.get(timeout=STREAM_TIMEOUT)
+            except queue.Empty:
+                print("[grabber] No frames for 5s — stream ended")
+                stop_event.set()
+                break
+            if not ret:
+                print("[grabber] Stream ended — stopping")
+                stop_event.set()
+                break
+            if frame.shape[:2] != shape[:2]:
+                frame = cv2.resize(frame, (shape[1], shape[0]))
+            with frame_lock:
+                np.copyto(buf, frame)
+            elapsed = time.time() - t_start
+            sleep_time = frame_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+    else:
+        while not stop_event.is_set():
+            t_start = time.time()
+            ret, frame = cap.read()
+            if not ret:
+                stop_event.set()
+                break
+            if frame.shape[:2] != shape[:2]:
+                frame = cv2.resize(frame, (shape[1], shape[0]))
+            with frame_lock:
+                np.copyto(buf, frame)
+            elapsed = time.time() - t_start
+            sleep_time = frame_interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     cap.release()
     shm.close()
@@ -461,6 +522,8 @@ def _parse_args():
                          "In live mode you can also press 'r' to toggle recording.")
     ap.add_argument("--output-mask", default=None,
                     help="Path to save binary mask video for benchmarking (e.g. pred_mask.mp4).")
+    ap.add_argument("--fps", type=float, default=None,
+                    help="Override detected FPS — use when streaming UDP with a known frame rate.")
     return ap.parse_args()
 
 
@@ -479,18 +542,45 @@ def main():
     is_video_file = isinstance(source, str) and os.path.isfile(source)
 
     # -- quick probe to lock in the frame shape + FPS --
-    cap_probe = cv2.VideoCapture(source)
-    if not cap_probe.isOpened():
+    is_udp = isinstance(source, str) and source.startswith("udp://")
+    probe_source = (source + "?timeout=0") if is_udp else source
+    if is_udp:
+        print("[probe] Waiting for stream...")
+    cap_probe = cv2.VideoCapture(probe_source)
+    if not is_udp and not cap_probe.isOpened():
         print(f"Cannot open source: {source}")
         return
-    ret, first = cap_probe.read()
-    if not ret:
+    if is_udp:
+        ret, first = False, None
+        deadline = time.time() + 120.0
         cap_probe.release()
-        print("Cannot read first frame")
-        return
+        while time.time() < deadline:
+            cap_probe = cv2.VideoCapture(probe_source)
+            slice_end = min(time.time() + 20.0, deadline)
+            while time.time() < slice_end:
+                ret, first = cap_probe.read()
+                if ret:
+                    open('/tmp/stream_start_time.txt', 'w').write(str(__import__('time').time()))
+                    break
+                time.sleep(0.1)
+            if ret:
+                break
+            cap_probe.release()
+        if not ret:
+            cap_probe.release()
+            print("[probe] No stream after 120s — is ffmpeg running on the PC?")
+            return
+    else:
+        ret, first = cap_probe.read()
+        if not ret:
+            cap_probe.release()
+            print("Cannot read first frame")
+            return
     h, w = first.shape[:2]
     frame_shape = (h, w, 3)
     cam_fps = cap_probe.get(cv2.CAP_PROP_FPS)
+
+    is_stream = isinstance(source, str) and not os.path.isfile(source)
 
     if is_video_file:
         # Video files always report a reliable FPS
@@ -498,8 +588,14 @@ def main():
             cam_fps = 30.0
         total_frames = int(cap_probe.get(cv2.CAP_PROP_FRAME_COUNT))
         print(f"[video] {w}×{h} @ {cam_fps:.1f} FPS  ({total_frames} frames)")
+    elif is_stream:
+        # UDP/RTSP: CAP_PROP_FPS can be unreliable (may reflect source FPS before re-encode).
+        reported = cam_fps
+        cam_fps = args.fps if args.fps is not None else 30.0
+        label = f"--fps override" if args.fps is not None else "defaulting to 30"
+        print(f"[stream] {w}×{h} — reported {reported:.1f} FPS, {label}: {cam_fps:.1f} FPS")
     else:
-        # Many USB webcams on Linux report 0 FPS — measure it manually
+        # Webcam: measure manually since many USB webcams report 0 FPS
         if cam_fps is None or cam_fps <= 0 or cam_fps > 300:
             print("[camera] CAP_PROP_FPS unreliable, measuring real FPS…")
             num_test = 20
@@ -553,9 +649,11 @@ def main():
     debug       = True
     prev_time   = time.time()
     has_person  = False
+    first_mask_received = False
 
     frame_delay_ms = max(1, int(1000.0 / cam_fps))  # waitKey delay in ms
     frame_interval = 1.0 / cam_fps                    # seconds per frame
+    has_display = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
 
     # -- video recording setup --
     video_writer = None
@@ -584,6 +682,9 @@ def main():
         mask_writer = cv2.VideoWriter(args.output_mask, fourcc, cam_fps, (w, h), isColor=False)
         if mask_writer.isOpened():
             print(f"[mask] saving binary mask to {args.output_mask}")
+            import time as _t; open("/tmp/mask_start_ns", "w").write(str(int(_t.time() * 1e9)))
+            _ts_path = args.output_mask.replace(".mp4", "_timestamps.csv")
+            _ts_file = open(_ts_path, "w")
         else:
             print(f"[mask] ERROR — could not open writer for {args.output_mask}")
             mask_writer = None
@@ -618,6 +719,7 @@ def main():
                 mask_ready.clear()
 
                 has_person = person_mask.any()
+                first_mask_received = True
 
             # ── pass-through (no compositing) ────────────────────────────────
             output = frame
@@ -643,20 +745,23 @@ def main():
                             (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
 
             # ── mask recording ───────────────────────────────────────────
-            if mask_writer is not None:
+            if mask_writer is not None and first_mask_received:
                 mask_writer.write(person_mask)
+                _ts_file.write(str(time.time()) + chr(10))
 
             # ── recording indicator + write ─────────────────────────────
             if recording and video_writer is not None:
                 video_writer.write(output)
                 cv2.circle(output, (w - 20, 20), 8, (0, 0, 255), -1)
 
-            cv2.imshow("Invisible Human  (q=quit, d=debug)", output)
-
             # Rate-limit display loop to camera FPS
             processing_ms = int((time.time() - loop_start) * 1000)
-            wait_ms = max(1, frame_delay_ms - processing_ms)
-            key = cv2.waitKey(wait_ms) & 0xFF
+            wait_ms = max(0, frame_delay_ms - processing_ms)
+            time.sleep(wait_ms / 1000.0)
+            key = 0xFF
+            if has_display:
+                cv2.imshow("Invisible Human  (q=quit, d=debug)", output)
+                key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break
             elif key == ord('d'):
@@ -679,6 +784,7 @@ def main():
         # ── clean shutdown ────────────────────────────────────────────────
         if mask_writer is not None:
             mask_writer.release()
+            _ts_file.close()
             print("[mask] ■ file saved")
         if video_writer is not None:
             video_writer.release()

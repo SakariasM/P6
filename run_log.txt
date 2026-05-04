@@ -1,0 +1,17 @@
+[mpeg2video @ 0x26f6ef90] Invalid frame dimensions 0x0.
+[probe] Waiting for stream...
+[stream] 1080×1920 — reported 30.0 FPS, --fps override: 30.0 FPS
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+[mpeg2video @ 0x26f6ef90] Invalid frame dimensions 0x0.
+[mpeg2video @ 0x26f6ef90] Invalid frame dimensions 0x0.
+[worker] loading TFLite model: /home/sw6/Project/Prototype/P6/models/yolo26n-seg/yolo26n-seg_float32.tflite
+[worker] model loaded OK — input 320×320, prototypes 80×80×32, format: post-NMS (dets×features=300×38)
+[worker] post-process at 80×80: dilate 3×3, blur 3×3
+[worker] entering inference loop
+[grabber] Stream connected
+[grabber] No frames for 5s — stream ended
+[mask] saving binary mask to /tmp/pred_mask_tmp.mp4
+Running — rate-limited to 30.0 FPS (33 ms/frame)
+Stand clear for a second at start for best results.
+Keys: q=quit  d=debug  r=toggle recording
+[mask] ■ file saved
