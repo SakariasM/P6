@@ -338,6 +338,7 @@ def main(args):
         base_channels=args.base_channels,
         depth=args.depth,
         teacher_channels=teacher_channels,
+        cbam_levels=args.cbam_levels,
     )
     model = model.to(device)
 
@@ -375,6 +376,32 @@ def main(args):
 
     resume_chunk_idx = 0
     resume_epoch_losses = None
+
+    if args.load_weights:
+        if args.resume:
+            raise ValueError("--load-weights and --resume are mutually exclusive")
+        if not Path(args.load_weights).exists():
+            raise FileNotFoundError(f"--load-weights path not found: {args.load_weights}")
+        print(f"Loading weights only (strict=False) from: {args.load_weights}")
+        checkpoint = torch.load(args.load_weights, map_location=device, weights_only=False)
+        state_dict = checkpoint.get('model_state_dict', checkpoint)
+        if any(k.startswith('module.') for k in state_dict):
+            state_dict = {k[len('module.'):]: v for k, v in state_dict.items()}
+        target = model.module if isinstance(model, torch.nn.DataParallel) else model
+        result = target.load_state_dict(state_dict, strict=False)
+        if result.missing_keys:
+            print(f"  Missing keys (initialized fresh): {len(result.missing_keys)}")
+            for k in result.missing_keys[:10]:
+                print(f"    {k}")
+            if len(result.missing_keys) > 10:
+                print(f"    ... and {len(result.missing_keys) - 10} more")
+        if result.unexpected_keys:
+            print(f"  Unexpected keys (dropped): {len(result.unexpected_keys)}")
+            for k in result.unexpected_keys[:10]:
+                print(f"    {k}")
+            if len(result.unexpected_keys) > 10:
+                print(f"    ... and {len(result.unexpected_keys) - 10} more")
+        print("Optimizer/scheduler/epoch counter start fresh.\n")
 
     if args.resume and Path(args.resume).exists():
         print(f"Resuming from checkpoint: {args.resume}")
@@ -719,7 +746,14 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default="./trained_models")
     parser.add_argument("--save-interval", type=int, default=10)
     parser.add_argument("--resume", type=str, default=None,
-                        help="Checkpoint to resume from")
+                        help="Checkpoint to resume from (full state: weights + optimizer + epoch)")
+    parser.add_argument("--load-weights", type=str, default=None,
+                        help="Init model weights only from a checkpoint (strict=False). "
+                             "Optimizer, scheduler, and epoch counter start fresh. "
+                             "Use this to fine-tune an architecture variant from a baseline checkpoint.")
+    parser.add_argument("--cbam-levels", type=int, nargs="+", default=None,
+                        help="Encoder indices that keep CBAM (e.g. '1 2 3' to disable CBAM at enc[0]). "
+                             "Default: all levels enabled.")
 
     args = parser.parse_args()
     main(args)
