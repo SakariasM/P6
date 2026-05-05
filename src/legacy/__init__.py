@@ -1,3 +1,3 @@
 """
-Legacy code - old experiments and tests.
+Hybrid Knowledge Distillation Pipeline
 """
