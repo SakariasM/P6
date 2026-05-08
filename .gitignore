@@ -19,7 +19,6 @@ test_data/*
 *.ipynb_checkpoints
 
 # Data and models
-data/
 checkpoints/
 logs/
 *.pth
@@ -30,8 +29,6 @@ logs/
 *.swp
 *.swo
 .claude/
-CLAUDE.md
-docs/
 # Documentation (personal reference, not tracked)
 PROJECT_DOCUMENTATION.txt
 
@@ -40,6 +37,8 @@ PROJECT_DOCUMENTATION.txt
 
 # Model cache
 .cache/
+cache/
+data/preds/
 
 # TensorBoard runs (keep folder, ignore contents)
 runs/**
