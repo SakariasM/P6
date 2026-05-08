@@ -2,8 +2,12 @@
 Compare training results across ablation configurations.
 
 Reads training_history.json from each ablation output directory and produces:
-1. A summary table (best val loss per config)
-2. An overlay plot of val_total loss curves
+1. Separate summary tables for original and scratch (no_cbam_enc0) runs
+2. Separate overlay plots for each group
+
+Directory conventions:
+  - train_ablation.slurm      -> <base_dir>/<config>/
+  - train_ablation_scratch.slurm -> <base_dir>/<config>_no_cbam_enc0_scratch/
 
 Usage:
     python src/compare_ablations.py \
@@ -23,6 +27,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
+SCRATCH_SUFFIX = "_no_cbam_enc0_scratch"
+
+
 def load_config(config_path: Path) -> dict[str, dict]:
     with open(config_path) as f:
         return json.load(f)
@@ -37,8 +44,14 @@ def load_history(history_path: Path) -> list[dict]:
     return history
 
 
-def print_comparison_table(configs: dict[str, dict], base_dir: Path):
-    """Print a summary table of best val loss and IoU/Dice for each config."""
+def get_dir_for_config(base_dir: Path, name: str, scratch: bool) -> Path:
+    if scratch:
+        return base_dir / f"{name}{SCRATCH_SUFFIX}"
+    return base_dir / name
+
+
+def print_comparison_table(configs: dict[str, dict], base_dir: Path,
+                           scratch: bool = False):
     header = (f"{'Config':<22} {'Layers':<40} {'Epochs':>6} "
               f"{'Best IoU':>9} {'Best Dice':>10} "
               f"{'Best Val Total':>14} {'Best Val Seg':>12}")
@@ -46,8 +59,8 @@ def print_comparison_table(configs: dict[str, dict], base_dir: Path):
     print("-" * len(header))
 
     for name, cfg in configs.items():
-        history_path = base_dir / name / "training_history.json"
-        history = load_history(history_path)
+        dir_path = get_dir_for_config(base_dir, name, scratch)
+        history = load_history(dir_path / "training_history.json")
 
         layers_str = ", ".join(cfg["teacher_layers"])
 
@@ -58,7 +71,6 @@ def print_comparison_table(configs: dict[str, dict], base_dir: Path):
 
         n_epochs = len(history)
 
-        # IoU / Dice
         iou_vals = [e.get("val_iou", 0.0) for e in history]
         dice_vals = [e.get("val_dice", 0.0) for e in history]
         best_iou = max(iou_vals) if any(v > 0 for v in iou_vals) else 0.0
@@ -82,12 +94,12 @@ def print_comparison_table(configs: dict[str, dict], base_dir: Path):
                   f"{best_total:>14.4f} {'N/A':>12}")
 
 
-def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
-    """Plot IoU, Dice, and loss curves overlaid for all configs."""
-    # Check which metrics are available across all configs
+def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
+                    scratch: bool = False, title_suffix: str = ""):
     any_iou = False
     for name in configs:
-        history = load_history(base_dir / name / "training_history.json")
+        dir_path = get_dir_for_config(base_dir, name, scratch)
+        history = load_history(dir_path / "training_history.json")
         if history and any(e.get("val_iou", 0) > 0 for e in history):
             any_iou = True
             break
@@ -102,8 +114,8 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
     has_any_data = False
 
     for name, cfg in configs.items():
-        history_path = base_dir / name / "training_history.json"
-        history = load_history(history_path)
+        dir_path = get_dir_for_config(base_dir, name, scratch)
+        history = load_history(dir_path / "training_history.json")
         if not history:
             continue
         has_any_data = True
@@ -112,7 +124,6 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
         layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
         label = f"{name} ({', '.join(layers_display)})"
 
-        # IoU and Dice
         if ax_iou is not None:
             iou_vals = [e.get("val_iou", 0.0) for e in history]
             if any(v > 0 for v in iou_vals):
@@ -122,7 +133,6 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
             if any(v > 0 for v in dice_vals):
                 ax_dice.plot(epochs, dice_vals, marker="o", markersize=3, label=label)
 
-        # Losses
         has_val = "val_total" in history[0]
         if has_val:
             val_totals = [e["val_total"] for e in history]
@@ -137,34 +147,34 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
             ax_total.plot(epochs, totals, marker="o", markersize=3, label=label)
 
     if not has_any_data:
-        print("No training data found for any config.")
+        print(f"No training data found for any config{title_suffix}.")
         plt.close(fig)
         return
 
     if ax_iou is not None:
         ax_iou.set_xlabel("Epoch")
         ax_iou.set_ylabel("IoU")
-        ax_iou.set_title("Validation IoU by Layer Configuration")
+        ax_iou.set_title(f"Validation IoU by Layer Configuration{title_suffix}")
         ax_iou.legend(fontsize=7, loc="lower right")
         ax_iou.grid(True, alpha=0.3)
         ax_iou.set_ylim(0.5, 1)
 
         ax_dice.set_xlabel("Epoch")
         ax_dice.set_ylabel("Dice")
-        ax_dice.set_title("Validation Dice by Layer Configuration")
+        ax_dice.set_title(f"Validation Dice by Layer Configuration{title_suffix}")
         ax_dice.legend(fontsize=7, loc="lower right")
         ax_dice.grid(True, alpha=0.3)
         ax_dice.set_ylim(0.7, 1)
 
     ax_total.set_xlabel("Epoch")
     ax_total.set_ylabel("Loss")
-    ax_total.set_title("Validation Total Loss by Layer Configuration")
+    ax_total.set_title(f"Validation Total Loss by Layer Configuration{title_suffix}")
     ax_total.legend(fontsize=7, loc="upper right")
     ax_total.grid(True, alpha=0.3)
 
     ax_seg.set_xlabel("Epoch")
     ax_seg.set_ylabel("Loss")
-    ax_seg.set_title("Validation Segmentation Loss by Layer Configuration")
+    ax_seg.set_title(f"Validation Segmentation Loss by Layer Configuration{title_suffix}")
     ax_seg.legend(fontsize=7, loc="upper right")
     ax_seg.grid(True, alpha=0.3)
 
@@ -174,10 +184,10 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
     plt.close(fig)
     print(f"\nSaved comparison plot to {output}")
 
-    # Save standalone segmentation loss plot
     fig_seg, ax_seg2 = plt.subplots(1, 1, figsize=(14, 5))
     for name, cfg in configs.items():
-        history = load_history(base_dir / name / "training_history.json")
+        dir_path = get_dir_for_config(base_dir, name, scratch)
+        history = load_history(dir_path / "training_history.json")
         if not history:
             continue
         epochs = [e["epoch"] for e in history]
@@ -191,7 +201,7 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
                              linestyle="--", label=label)
     ax_seg2.set_xlabel("Epoch")
     ax_seg2.set_ylabel("Loss")
-    ax_seg2.set_title("Validation Segmentation Loss by Layer Configuration")
+    ax_seg2.set_title(f"Validation Segmentation Loss by Layer Configuration{title_suffix}")
     ax_seg2.legend(fontsize=7, loc="upper right")
     ax_seg2.grid(True, alpha=0.3)
     fig_seg.tight_layout()
@@ -202,11 +212,12 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path):
 
 
 def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
+                    scratch: bool = False, title_suffix: str = "",
                     n_best: int = 3, n_worst: int = 2):
-    """Plot seg loss for the best N and worst N configs by IoU."""
     rankings = []
     for name, cfg in configs.items():
-        history = load_history(base_dir / name / "training_history.json")
+        dir_path = get_dir_for_config(base_dir, name, scratch)
+        history = load_history(dir_path / "training_history.json")
         if not history:
             continue
         iou_vals = [e.get("val_iou", 0.0) for e in history]
@@ -235,7 +246,6 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
         if not any(v > 0 for v in val_segs):
             continue
         layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
-        rank = "best" if name in best_names else "worst"
         label = f"{name} ({', '.join(layers_display)}) [IoU: {best_iou:.4f}]"
         if name in best_names:
             color = colors_best[best_idx % len(colors_best)]
@@ -250,7 +260,7 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU")
+    ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU{title_suffix}")
     ax.legend(fontsize=7, loc="upper right")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -276,9 +286,28 @@ def main():
     configs = load_config(args.configs)
     print(f"Loaded {len(configs)} ablation configs\n")
 
-    print_comparison_table(configs, args.base_dir)
-    plot_comparison(configs, args.base_dir, args.output)
-    plot_top_bottom(configs, args.base_dir, args.output)
+    # --- Original (train_ablation.slurm) ---
+    print("=" * 80)
+    print("ORIGINAL (train_ablation.slurm) — full CBAM")
+    print("=" * 80)
+    print_comparison_table(configs, args.base_dir, scratch=False)
+    original_output = args.output.with_stem(args.output.stem + "_original")
+    plot_comparison(configs, args.base_dir, original_output,
+                    scratch=False, title_suffix=" (Original)")
+    plot_top_bottom(configs, args.base_dir, original_output,
+                    scratch=False, title_suffix=" (Original)")
+
+    # --- Scratch (train_ablation_scratch.slurm) ---
+    print()
+    print("=" * 80)
+    print("SCRATCH (train_ablation_scratch.slurm) — no_cbam_enc0")
+    print("=" * 80)
+    print_comparison_table(configs, args.base_dir, scratch=True)
+    scratch_output = args.output.with_stem(args.output.stem + "_scratch")
+    plot_comparison(configs, args.base_dir, scratch_output,
+                    scratch=True, title_suffix=" (Scratch, no_cbam_enc0)")
+    plot_top_bottom(configs, args.base_dir, scratch_output,
+                    scratch=True, title_suffix=" (Scratch, no_cbam_enc0)")
 
 
 if __name__ == "__main__":
