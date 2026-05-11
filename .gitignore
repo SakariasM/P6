@@ -33,6 +33,8 @@ logs/
 .claude/
 CLAUDE.md
 docs/
+.onnx
+.onnx.data
 # Documentation (personal reference, not tracked)
 PROJECT_DOCUMENTATION.txt
 .png
