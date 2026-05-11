@@ -19,10 +19,6 @@
     "description": "Mid + deep backbone (P4+P5)",
     "teacher_layers": ["model.6", "model.9"]
   },
-  "deep_neck1": {
-    "description": "Deep backbone + first neck layer (P5+neck)",
-    "teacher_layers": ["model.9", "model.12"]
-  },
   "backbone_3": {
     "description": "All 3 backbone layers (P3+P4+P5) — current default",
     "teacher_layers": ["model.4", "model.6", "model.9"]
