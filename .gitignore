@@ -29,6 +29,7 @@ logs/
 *.swp
 *.swo
 .claude/
+*.jpg
 # Documentation (personal reference, not tracked)
 PROJECT_DOCUMENTATION.txt
 

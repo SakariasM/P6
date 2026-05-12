@@ -274,11 +274,97 @@ venv\Scripts\python tools\generate_gt_sam2.py --input video.mp4 --output data\gt
 If `pip install -e .` in the sam2_repo step fails due to CUDA compilation errors:
 
 1. Install WSL2: `wsl --install` in PowerShell (restart required)
-2. Open a WSL2 terminal and repeat all setup steps using the Linux commands instead
+2. Open a WSL2 terminal and repeat all setup steps using the Linux setup section above
 3. Access Windows files from WSL2 at `/mnt/c/Users/<your name>/...`
 
+---
 
+---
 
-python3 tools/benchmark.py \
-  --gt data/gt/gt_mask_1080p_30fps.mp4 \
-  --pred data/preds/pred_mask_yolo26n-seg_1080x1920.mp4
+# PART 2 — COCO mAP Benchmark
+
+> **Linux only.** No GPU needed — runs on CPU.
+
+Evaluates a TFLite segmentation model against the official COCO val2017 dataset
+(person class only) and reports mAP@50-95 (mask) — the same metric Ultralytics
+uses to publish their model numbers.
+
+Run from the **P6 folder root** using its venv.
+
+---
+
+## Setup (Linux — once only)
+
+```bash
+cd /path/to/P6
+venv/bin/pip install ai-edge-litert pycocotools
+```
+
+---
+
+## Running the COCO Benchmark (Linux)
+
+```bash
+cd /path/to/P6
+
+# Full evaluation — ~2693 person images, ~5–10 min on CPU
+venv/bin/python tools/coco_benchmark.py \
+  --model models/yolo26n-seg_float32.tflite
+
+# Quick sanity check — 100 images, ~1 min
+venv/bin/python tools/coco_benchmark.py \
+  --model models/yolo26n-seg_float32.tflite \
+  --max-images 100
+```
+
+Always use `--threshold 0.5` (the default) for benchmarking. Do not use the
+`MASK_THRESHOLD = 0.7` from `live_mask.py` — that is tuned for the live pipeline
+and will artificially shrink masks and hurt the score.
+
+---
+
+## COCO Dataset
+
+Downloaded automatically on first run (~1.3 GB total) into `datasets/coco_data/`:
+- `val2017/` — 5,000 validation images (~1 GB)
+- `annotations/instances_val2017.json` — annotations (~236 MB)
+
+Only the ~2,693 images containing at least one person annotation are evaluated.
+
+If the dataset is already downloaded, point to its location with `--coco-dir`.
+
+---
+
+## Options (`coco_benchmark.py`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--model` | required | Path to `.tflite` model file |
+| `--coco-dir` | `./datasets/coco_data` | Where to store/find COCO data |
+| `--threshold` | `0.5` | Mask probability threshold — keep at 0.5 for benchmarking |
+| `--min-area` | `100` | Minimum connected-component size in pixels (filters noise) |
+| `--max-images` | all | Limit number of images — useful for quick checks |
+
+---
+
+## Output
+
+Results are printed to the terminal and **appended** to `logs/coco_logs.txt`.
+The `logs/` folder is created automatically. Each entry includes the date, model
+name, threshold, image count, and the full metric table so all runs are stored in
+one place for comparison.
+
+---
+
+## Interpreting Results
+
+| Metric | What it means |
+|---|---|
+| mAP@50-95 | Primary metric — averaged over IoU thresholds 0.50 to 0.95 |
+| mAP@50 | Loose — mask just needs to cover the person roughly |
+| mAP@75 | Strict — mask boundary must be fairly precise |
+| mAP small / medium / large | Breakdown by person size in the original image |
+
+**Note on resolution:** models are exported at 320×320 input. Ultralytics publishes
+their numbers at 640×640. Small and medium object scores will be near zero at 320px
+— this is expected. The large-object score is the most meaningful number to compare.
