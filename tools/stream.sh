@@ -49,7 +49,7 @@ else
 fi
 
 DEBUG_ARG=""
-[[ -n "$DEBUG" ]] && DEBUG_ARG="--output /tmp/debug_output.mp4"
+[[ -n "$DEBUG" ]] && DEBUG_ARG="--debug"
 
 echo "[stream] Killing any leftover processes on Pi..."
 ssh "$PI" "pkill -f live_mask.py; pkill -f run_benchmark.sh; sleep 1"

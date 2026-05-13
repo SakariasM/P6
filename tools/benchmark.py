@@ -177,18 +177,24 @@ def main():
     ap.add_argument('--max-seconds', type=float, default=None,  help='Only compare first N seconds of footage')
     ap.add_argument('--stretch-gt',  action='store_true',       help='Temporally resample GT to match pred duration (use when pred is slower/longer but covers the same content)')
     ap.add_argument('--pred-offset-seconds', type=float, default=0.0, help='Skip first N seconds of pred video before comparing')
+    ap.add_argument('--pred-offset-auto',   action='store_true',       help='Auto-find best offset (0.0–5.0s in 0.1s steps) by maximising IoU')
     args = ap.parse_args()
 
     fps = args.fps if args.fps else get_video_fps(args.pred)
     max_frames = int(fps * args.max_seconds) if args.max_seconds else None
     pred_offset_frames = int(fps * args.pred_offset_seconds)
 
+    # Auto-detect run log if not explicitly passed
+    if not args.log:
+        auto_log = args.pred.replace(".mp4", "_run_log.txt")
+        if os.path.exists(auto_log):
+            args.log = auto_log
+            print(f"[log] Auto-detected run log: {auto_log}")
+
     # Load pred first to know target resolution, then load GT resized on-the-fly
     print(f"Loading pred masks (max_frames={max_frames}, offset={pred_offset_frames} frames)...")
-    pred_masks = load_mask_video(args.pred, max_frames=max_frames)
-    if pred_offset_frames:
-        pred_masks = pred_masks[pred_offset_frames:]
-    pred_h, pred_w = pred_masks.shape[1], pred_masks.shape[2]
+    pred_masks_full = load_mask_video(args.pred, max_frames=max_frames)
+    pred_h, pred_w = pred_masks_full.shape[1], pred_masks_full.shape[2]
 
     print(f"Loading GT masks (resizing to {pred_w}x{pred_h} on-the-fly)...")
     gt_masks_full = load_mask_video(args.gt, resize_to=(pred_h, pred_w))
@@ -197,41 +203,57 @@ def main():
     # -- timestamp-based alignment --
     ts_path = args.pred.replace(".mp4", "_timestamps.csv")
     if os.path.exists(ts_path):
-        pred_ts = np.loadtxt(ts_path)
-        if pred_offset_frames:
-            pred_ts = pred_ts[pred_offset_frames:]
+        pred_ts_full = np.loadtxt(ts_path)
         if max_frames:
-            pred_ts = pred_ts[:max_frames]
+            pred_ts_full = pred_ts_full[:max_frames]
 
-        # The timestamps belong to the raw inference frames, but pred_masks is the
-        # stretched video (more frames). Sample the stretched video at the positions
-        # that correspond to each raw frame.
-        n_raw = len(pred_ts)
-        n_stretched = len(pred_masks)
-        raw_indices = np.round(np.arange(n_raw) * n_stretched / n_raw).astype(int)
-        raw_indices = np.clip(raw_indices, 0, n_stretched - 1)
-        pred_masks = pred_masks[raw_indices]  # now n_raw frames, one per timestamp
-
-        # Use stream start time as t0 so GT alignment starts at stream second 0,
-        # not at the first mask frame (which may be 1-2s after stream start)
         stream_start_path = args.pred.replace(".mp4", "_stream_start.txt")
-        if os.path.exists(stream_start_path):
-            t0 = float(open(stream_start_path).read().strip())
-            print(f"[timestamps] Stream start offset: {pred_ts[0] - t0:.2f}s before first mask frame")
-        else:
-            t0 = pred_ts[0]
+        t0_base = float(open(stream_start_path).read().strip()) if os.path.exists(stream_start_path) else pred_ts_full[0]
 
-        # For each pred frame, find the nearest GT frame by elapsed time
-        gt_indices = np.round((pred_ts - t0) * gt_fps).astype(int)
-        gt_indices = np.clip(gt_indices, 0, len(gt_masks_full) - 1)
-        gt_masks = gt_masks_full[gt_indices]
+        def _align_with_offset(offset_frames):
+            pred_ts = pred_ts_full[offset_frames:]
+            n_raw      = len(pred_ts)
+            n_stretched = len(pred_masks_full)
+            raw_indices = np.round(np.arange(n_raw) * n_stretched / n_raw).astype(int)
+            raw_indices = np.clip(raw_indices, 0, n_stretched - 1)
+            pm = pred_masks_full[raw_indices]
+            gt_indices = np.round((pred_ts - t0_base) * gt_fps).astype(int)
+            gt_indices = np.clip(gt_indices, 0, len(gt_masks_full) - 1)
+            gm = gt_masks_full[gt_indices]
+            n = min(len(gm), len(pm))
+            return gm[:n], pm[:n], pred_ts, gt_indices
+
+        # Auto-find best offset (0.0 to 5.0s in 0.1s steps) if --pred-offset-auto is set
+        if args.pred_offset_auto:
+            print("[offset] Searching best offset (0.0–5.0s in 0.1s steps)...")
+            best_iou, best_offset = -1.0, 0
+            max_offset_frames = int(5.0 * fps)
+            for off_f in range(0, max_offset_frames + 1, max(1, int(0.1 * fps))):
+                gm, pm, _, _ = _align_with_offset(off_f)
+                iou = np.mean([
+                    (np.logical_and(g, p).sum() / np.logical_or(g, p).sum())
+                    if np.logical_or(g, p).any() else 1.0
+                    for g, p in zip(gm, pm)
+                ])
+                if iou > best_iou:
+                    best_iou, best_offset = iou, off_f
+            pred_offset_frames = best_offset
+            print(f"[offset] Best offset: {best_offset/fps:.1f}s ({best_offset} frames) — IoU {best_iou:.4f}")
+        else:
+            pred_offset_frames = int(fps * args.pred_offset_seconds)
+            print(f"[offset] Manual offset: {args.pred_offset_seconds}s ({pred_offset_frames} frames)")
+
+        gt_masks, pred_masks, pred_ts, gt_indices = _align_with_offset(pred_offset_frames)
 
         elapsed = pred_ts[-1] - pred_ts[0]
+        n_raw = len(pred_ts)
+        print(f"[timestamps] Stream start offset: {pred_ts[0] - t0_base:.2f}s before first mask frame")
         print(f"[timestamps] Loaded {n_raw} pred timestamps over {elapsed:.1f}s "
-              f"({n_raw/elapsed:.1f} fps avg) — sampled from {n_stretched} stretched frames")
+              f"({n_raw/elapsed:.1f} fps avg) — sampled from {len(pred_masks_full)} stretched frames")
         print(f"[timestamps] GT frame range used: {gt_indices[0]} - {gt_indices[-1]}")
     else:
         print("[timestamps] No timestamp file found — falling back to index-based alignment")
+        pred_masks = pred_masks_full[pred_offset_frames:]
         gt_masks = gt_masks_full
 
         # Temporal resampling: stretch GT to match pred length (nearest-frame lookup)
@@ -242,21 +264,38 @@ def main():
             print(f"[stretch-gt] Resampled GT from {n_gt} -> {n_pred} frames (ratio {n_pred/n_gt:.3f}x)")
 
     n = min(len(gt_masks), len(pred_masks))
-    if len(gt_masks) != len(pred_masks):
+    if abs(len(gt_masks) - len(pred_masks)) > 1:
         print(f"[warn] Frame count mismatch — GT={len(gt_masks)}, pred={len(pred_masks)}, truncating to {n}")
     gt_masks   = gt_masks[:n]
     pred_masks = pred_masks[:n]
     print(f"Comparing {n} frames at {fps:.1f} FPS\n")
 
+    frame_h = gt_masks.shape[1]
+
+    def person_size_class(gt_mask):
+        """Classify person as small/medium/large by bbox height fraction of frame.
+        Thresholds mirror COCO scale: small <5%, medium 5-30%, large >30%."""
+        rows = np.where(gt_mask.any(axis=1))[0]
+        if len(rows) == 0:
+            return None
+        frac = (rows[-1] - rows[0]) / frame_h
+        if frac < 0.05:
+            return 'small'
+        elif frac < 0.30:
+            return 'medium'
+        return 'large'
+
     # per-frame
     ious, precs, recs, f1s = [], [], [], []
     gt_person, pred_person = [], []
+    size_classes = []
     for gt, pred in zip(gt_masks, pred_masks):
         iou, prec, rec, f1 = frame_metrics(gt, pred)
         ious.append(iou);  precs.append(prec)
         recs.append(rec);  f1s.append(f1)
         gt_person.append(gt.any())
         pred_person.append(pred.any())
+        size_classes.append(person_size_class(gt))
 
     ious  = np.array(ious);  precs = np.array(precs)
     recs  = np.array(recs);  f1s   = np.array(f1s)
@@ -281,6 +320,19 @@ def main():
     # pixel coverage = mean recall on person frames
     pixel_coverage = recs[gt_p].mean() if n_person else 0.0
 
+    # size breakdown
+    size_classes = np.array(size_classes)
+    def size_map50(label):
+        mask = (size_classes == label) & gt_p
+        n = mask.sum()
+        if n == 0:
+            return None, 0
+        return ((ious >= 0.5) & mask).sum() / n, n
+
+    sm_map50, sm_n = size_map50('small')
+    md_map50, md_n = size_map50('medium')
+    lg_map50, lg_n = size_map50('large')
+
     # ── output ────────────────────────────────────────────────────────────────
     sep = "=" * 52
 
@@ -293,6 +345,13 @@ def main():
     print(f"  Mean Precision        : {precs.mean():.4f}")
     print(f"  Mean F1               : {f1s.mean():.4f}")
     print(f"  mAP@50                : {map50:.4f}")
+    print()
+    print(sep)
+    print("  BY PERSON SIZE  (bbox height % of frame)")
+    print(sep)
+    print(f"  mAP@50 small   (<5%) : {sm_map50:.4f}  ({sm_n} frames)" if sm_map50 is not None else f"  mAP@50 small   (<5%) : n/a")
+    print(f"  mAP@50 medium (5-30%): {md_map50:.4f}  ({md_n} frames)" if md_map50 is not None else f"  mAP@50 medium (5-30%): n/a")
+    print(f"  mAP@50 large   (>30%) : {lg_map50:.4f}  ({lg_n} frames)" if lg_map50 is not None else f"  mAP@50 large   (>30%) : n/a")
     print()
     print(sep)
     print("  TEMPORAL STABILITY")
@@ -314,9 +373,10 @@ def main():
             split = max(1, len(fps_vals) // 10)
             start = fps_vals[:split].mean()
             end   = fps_vals[-split:].mean()
+            pct   = (end - start) / start * 100 if start > 0 else 0.0
             print(f"  Mean Seg FPS          : {fps_vals.mean():.1f}")
-            print(f"  Min / Max Seg FPS     : {fps_vals.min():.1f} / {fps_vals.max():.1f}")
-            print(f"  Thermal degradation   : {start:.1f} -> {end:.1f} FPS  (drop: {start-end:.1f})")
+            print(f"  Peak / Min FPS        : {fps_vals.max():.1f} / {fps_vals.min():.1f}  (momentary)")
+            print(f"  Thermal degradation   : {pct:+.1f}%  ({start:.1f} → {end:.1f} FPS)")
         else:
             print("  No FPS values found in log")
 
@@ -331,6 +391,30 @@ def main():
         score = ssim_background(inp_frames, out_frames, gt_masks)
         if score is not None:
             print(f"  SSIM (background)     : {score:.4f}")
+
+    # ── RAM log ───────────────────────────────────────────────────────────────
+    ram_vals = None
+    ram_log_path = args.pred.replace(".mp4", "_ram_log.txt")
+    if os.path.exists(ram_log_path):
+        try:
+            ram_vals = np.loadtxt(ram_log_path, usecols=1)
+        except Exception:
+            ram_vals = None
+
+    if ram_vals is not None and len(ram_vals):
+        print()
+        print(sep)
+        print("  RAM USAGE (MB)")
+        print(sep)
+        print(f"  Mean RAM              : {ram_vals.mean():.0f} MB")
+        print(f"  Peak RAM              : {ram_vals.max():.0f} MB")
+        print(f"  Min  RAM              : {ram_vals.min():.0f} MB")
+    elif ram_log_path:
+        print()
+        print(sep)
+        print("  RAM USAGE")
+        print(sep)
+        print("  No RAM log found — re-run the stream to collect RAM data")
 
     print()
     print(sep)
@@ -383,6 +467,65 @@ def main():
                 lf.write("  No FPS values found in log\n")
         lf.write("\n")
     print(f"Log entry saved  -> {log_path}  (ID: {run_id})")
+
+    # ── central log (logs/benchmark_logs.txt) ─────────────────────────────────
+    model_name = os.path.basename(args.pred).replace("pred_mask_", "").replace(".mp4", "")
+    central_log = ROOT / "logs" / "benchmark_logs.txt"
+    central_log.parent.mkdir(parents=True, exist_ok=True)
+    with open(central_log, "a") as cf:
+        cf.write(f"\n{'='*52}\n")
+        cf.write(f"  DATE      : {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        cf.write(f"  MODEL     : {model_name}\n")
+        cf.write(f"  GT        : {os.path.basename(args.gt)}\n")
+        cf.write(f"  FRAMES    : {n}  ({n/fps:.1f}s at {fps:.1f} FPS)\n")
+        cf.write(f"{'='*52}\n")
+        cf.write(f"  DETECTION & MASK QUALITY\n")
+        cf.write(f"{'='*52}\n")
+        cf.write(f"  Mean IoU              : {ious.mean():.4f}\n")
+        cf.write(f"  Pixel Coverage        : {pixel_coverage*100:.1f}%\n")
+        cf.write(f"  Mean Recall           : {recs.mean():.4f}\n")
+        cf.write(f"  Mean Precision        : {precs.mean():.4f}\n")
+        cf.write(f"  Mean F1               : {f1s.mean():.4f}\n")
+        cf.write(f"  mAP@50                : {map50:.4f}\n")
+        cf.write(f"{'='*52}\n")
+        cf.write(f"  BY PERSON SIZE\n")
+        cf.write(f"{'='*52}\n")
+        cf.write(f"  mAP@50 small   (<5%) : {f'{sm_map50:.4f}  ({sm_n} frames)' if sm_map50 is not None else 'n/a'}\n")
+        cf.write(f"  mAP@50 medium (5-30%): {f'{md_map50:.4f}  ({md_n} frames)' if md_map50 is not None else 'n/a'}\n")
+        cf.write(f"  mAP@50 large   (>30%) : {f'{lg_map50:.4f}  ({lg_n} frames)' if lg_map50 is not None else 'n/a'}\n")
+        cf.write(f"{'='*52}\n")
+        cf.write(f"  TEMPORAL STABILITY\n")
+        cf.write(f"{'='*52}\n")
+        cf.write(f"  Flickering Events     : {flickers}\n")
+        cf.write(f"  Temporal IoU Std Dev  : {iou_std:.4f}\n")
+        cf.write(f"  MOTA (simplified)     : {mota:.4f}\n")
+        if n_person:
+            cf.write(f"  Missed detections     : {fn} / {n_person} ({fn/n_person*100:.1f}%)\n")
+        cf.write(f"  False alarms          : {fp} frames\n")
+        if args.log:
+            fps_vals = parse_log(args.log)
+            cf.write(f"{'='*52}\n")
+            cf.write(f"  PERFORMANCE\n")
+            cf.write(f"{'='*52}\n")
+            if fps_vals is not None:
+                split = max(1, len(fps_vals) // 10)
+                start = fps_vals[:split].mean()
+                end   = fps_vals[-split:].mean()
+                pct   = (end - start) / start * 100 if start > 0 else 0.0
+                cf.write(f"  Mean Seg FPS          : {fps_vals.mean():.1f}\n")
+                cf.write(f"  Peak / Min FPS        : {fps_vals.max():.1f} / {fps_vals.min():.1f}  (momentary)\n")
+                cf.write(f"  Thermal degradation   : {pct:+.1f}%  ({start:.1f} → {end:.1f} FPS)\n")
+            else:
+                cf.write("  No FPS values found in log\n")
+        if ram_vals is not None and len(ram_vals):
+            cf.write(f"{'='*52}\n")
+            cf.write(f"  RAM USAGE (MB)\n")
+            cf.write(f"{'='*52}\n")
+            cf.write(f"  Mean RAM              : {ram_vals.mean():.0f} MB\n")
+            cf.write(f"  Peak RAM              : {ram_vals.max():.0f} MB\n")
+            cf.write(f"  Min  RAM              : {ram_vals.min():.0f} MB\n")
+        cf.write(f"{'='*52}\n\n")
+    print(f"Central log      -> {central_log}")
 
     # ── comparison image ──────────────────────────────────────────────────────
     out_img = run_dir / "mask_comparison.png"
