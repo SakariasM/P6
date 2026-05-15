@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 
-EPOCH_TICKS = [1, 5, 10, 20, 30, 40, 50]
+EPOCH_TICKS = [1, 5, 15, 30, 50]
 
 
 def _setup_epoch_axis(ax):
@@ -262,8 +262,7 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
         val_segs = [e.get("val_segmentation", 0.0) for e in history]
         if not any(v > 0 for v in val_segs):
             continue
-        layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
-        label = f"{name} ({', '.join(layers_display)}) [IoU: {best_iou:.4f}]"
+        label = f"{name} — Best IoU = {best_iou:.4f}"
         if name in best_names:
             color = colors_best[best_idx % len(colors_best)]
             best_idx += 1
@@ -278,7 +277,7 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
     ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU{title_suffix}")
-    ax.legend(fontsize=10, loc="upper right")
+    ax.legend(fontsize=12, loc="upper right")
     ax.grid(True, alpha=0.3)
     _setup_epoch_axis(ax)
     fig.tight_layout()
@@ -323,9 +322,9 @@ def main():
     print_comparison_table(configs, args.base_dir, scratch=True)
     scratch_output = args.output.with_stem(args.output.stem + "_scratch")
     plot_comparison(configs, args.base_dir, scratch_output,
-                    scratch=True, title_suffix=" (Scratch, no_cbam_enc0)")
+                    scratch=True, title_suffix=" (no_cbam_enc0)")
     plot_top_bottom(configs, args.base_dir, scratch_output,
-                    scratch=True, title_suffix=" (Scratch, no_cbam_enc0)")
+                    scratch=True, title_suffix=" (no_cbam_enc0)")
 
 
 if __name__ == "__main__":
