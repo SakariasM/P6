@@ -66,16 +66,40 @@ python3 tools/benchmark.py \
 ```
 --gt                    GT mask video (required)
 --pred                  Prediction mask video (required)
---log                   live_mask.py log file — parses Seg FPS for performance section
+--log                   live_mask.py log file — auto-detected from pred filename if omitted
 --input                 Original raw video (needed for SSIM background quality)
 --output                Model output video (needed for SSIM background quality)
 --fps                   Override FPS — auto-detected from pred video if omitted
 --max-seconds           Only compare first N seconds
 --pred-offset-seconds   Skip first N seconds of pred before comparing
+--pred-offset-auto      Auto-find best offset 0–5s in 0.1s steps by maximising IoU
 --stretch-gt            Fallback: resample GT to match pred frame count (used when no timestamps)
 ```
 
 Comparison image is **always** generated under `runs/benchmark/<run-id>/mask_comparison.png` — no flag needed.
+
+All results are appended to `logs/benchmark_logs.txt` (central log, one entry per run).
+
+## benchmark.py — output sections
+
+**Detection & Mask Quality:** Mean IoU, Pixel Coverage, Recall, Precision, F1, mAP@50
+
+**By Person Size:** mAP@50 split by bbox height fraction — small <5%, medium 5–30%, large >30%
+
+**Temporal Stability:** Flickering Events, Temporal IoU Std Dev, MOTA, Missed detections, False alarms
+
+**Performance** (auto from run_log): Mean/Peak/Min Seg FPS, Thermal degradation % (first 10% vs last 10% of run)
+
+**RAM Usage** (auto from ram_log): Mean/Peak/Min RAM in MB
+
+## run_benchmark.sh — Pi-side files sent back
+
+After each run the Pi SCPs these to `data/preds/` on the PC:
+- `pred_mask_{model}_{WxH}.mp4` — prediction mask video
+- `..._timestamps.csv` — per-frame timestamps for alignment
+- `..._stream_start.txt` — stream start anchor
+- `..._run_log.txt` — FPS readings (Seg: X.X printed every second)
+- `..._ram_log.txt` — RAM sampled every 2s (timestamp + MB used)
 
 ---
 
@@ -121,19 +145,23 @@ GT generated with `generate_gt_sam2.py` (SAM2 + Grounding DINO) on the Windows 3
 
 ## stream.sh (PC-side)
 
-Run from Git Bash in `SAM-benchmark/`:
+Run from the P6 repo root:
 ```bash
-bash tools/stream.sh data/gt/test_footage_40s_1080p_30fps.mp4 [--fps N] [--debug]
+bash tools/stream.sh data/gt/test_footage_40s_720p_30fps.mp4 [--fps N] [--debug] [--model path/to/model.tflite]
 ```
 
 What it does:
-1. Auto-detects FPS via ffprobe (or use `--fps` to override)
-2. Kills any leftover processes on Pi
-3. Starts `run_benchmark.sh` on Pi via SSH (nohup, detached)
-4. Sleeps 5s for model to load
-5. Streams the video via ffmpeg UDP
-6. Waits for stream to finish, Pi wraps up
-7. `--debug`: also SCPs the Pi's visual overlay video back as `debug_output.mp4`
+1. If `--model` given: SCPs model to Pi, creates folder, updates `MODEL` in `live_mask.py`
+2. Auto-detects FPS via ffprobe (or use `--fps` to override)
+3. Kills any leftover processes on Pi
+4. Starts `run_benchmark.sh` on Pi via SSH (nohup, detached)
+5. Sleeps 5s for model to load
+6. Streams the video via ffmpeg UDP
+7. Waits for stream to finish, Pi wraps up
+8. SCPs back to `data/preds/`: pred mask, timestamps, stream_start, run_log, ram_log
+9. `--debug`: also SCPs the Pi's visual overlay video
+
+**`--model` flag:** pass a local `.tflite` path — stream.sh derives the model name from the filename, creates `models/{name}/` on the Pi, SCPs the file as `{name}_float32.tflite`, and patches `MODEL` in `live_mask.py`. No manual Pi steps needed.
 
 ---
 

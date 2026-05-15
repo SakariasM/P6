@@ -4,35 +4,64 @@
 
 ## Running a benchmark (standard workflow)
 
-Open **Git Bash** in `C:\Users\flemm\Documents\SAM-benchmark`.
+> Run all commands from the **P6 repo root** on Linux, or Git Bash on Windows.
 
 ### Step 1 — Stream the video and record the pred mask
+
 ```bash
-bash tools/stream.sh data/gt/test_footage_40s_1080p_30fps.mp4
+bash tools/stream.sh data/gt/test_footage_40s_720p_30fps.mp4
 ```
+
 This will:
 1. Kill any leftover processes on the Pi
 2. Start `run_benchmark.sh` on the Pi via SSH
 3. Wait 5 seconds for the model to load
 4. Stream the video from PC to Pi over UDP
-5. Wait for the Pi to stretch and SCP the pred mask + timestamps back to `data/preds/`
+5. Wait for the Pi to finish, then SCP back to `data/preds/`:
+   - `pred_mask_{model}_{WxH}.mp4`
+   - `_timestamps.csv`
+   - `_stream_start.txt`
+   - `_run_log.txt` (FPS readings)
+   - `_ram_log.txt` (RAM usage sampled every 2s)
 
-Optional flag: `--debug` — also records and fetches the Pi's visual overlay video.
+#### stream.sh flags
 
-### Step 2 — Run the benchmark
-```bash
-python3 tools/benchmark.py \
-  --gt data/gt/gt_mask_1080p_30fps.mp4 \
-  --pred data/preds/pred_mask_yolo26n-seg_1080x1920.mp4
-```
-This automatically uses the timestamps file (`pred_mask_..._timestamps.csv`) if present for accurate frame alignment. A comparison image is saved under `runs/benchmark/<run-id>/mask_comparison.png` every run.
-
-#### Useful flags
 | Flag | Example | Effect |
 |---|---|---|
-| `--pred-offset-seconds` | `--pred-offset-seconds 1` | Skip first N seconds of pred |
-| `--max-seconds` | `--max-seconds 35` | Only compare first N seconds |
+| `--fps N` | `--fps 30` | Override FPS (auto-detected by default) |
+| `--debug` | `--debug` | Also fetch Pi's visual overlay video |
+| `--model path` | `--model models/student_seg_deep_only_640.tflite` | Upload a local model to the Pi and switch to it automatically |
+
+**Using `--model`:** if the model is not yet on the Pi, pass a local path and `stream.sh` will create the model folder on the Pi, SCP the file, and update `MODEL` in `live_mask.py` — no manual steps needed:
+
+```bash
+bash tools/stream.sh data/gt/test_footage_40s_720p_30fps.mp4 \
+  --model models/legacy/student_seg_deep_only_640.tflite \
+  --debug
+```
+
+---
+
+### Step 2 — Run the benchmark
+
+```bash
+python3 tools/benchmark.py \
+  --gt data/gt/gt_mask_720p_30fps.mp4 \
+  --pred data/preds/pred_mask_yolo26n-seg_720x1280.mp4
+```
+
+The run log and RAM log are **auto-detected** from the pred filename — no `--log` flag needed. A comparison image is saved under `runs/benchmark/<run-id>/mask_comparison.png` and all results are appended to `logs/benchmark_logs.txt`.
+
+#### benchmark.py flags
+
+| Flag | Example | Effect |
+|---|---|---|
+| `--pred-offset-seconds N` | `--pred-offset-seconds 1` | Skip first N seconds of pred |
+| `--pred-offset-auto` | `--pred-offset-auto` | Auto-find best offset (0–5s in 0.1s steps) by maximising IoU |
+| `--max-seconds N` | `--max-seconds 35` | Only compare first N seconds |
 | `--stretch-gt` | `--stretch-gt` | Resample GT to match pred length (fallback when no timestamps) |
+
+**Tip:** use `--pred-offset-auto` if the start of the video has a black frame or the model takes a moment to initialise — it scans all offsets and picks the best one automatically.
 
 ---
 

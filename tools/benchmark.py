@@ -177,7 +177,7 @@ def main():
     ap.add_argument('--max-seconds', type=float, default=None,  help='Only compare first N seconds of footage')
     ap.add_argument('--stretch-gt',  action='store_true',       help='Temporally resample GT to match pred duration (use when pred is slower/longer but covers the same content)')
     ap.add_argument('--pred-offset-seconds', type=float, default=0.0, help='Skip first N seconds of pred video before comparing')
-    ap.add_argument('--pred-offset-auto',   action='store_true',       help='Auto-find best offset (0.0–5.0s in 0.1s steps) by maximising IoU')
+    ap.add_argument('--pred-offset-auto',   action='store_true',       help='Auto-find best offset (0.0–2.0s in 0.1s steps) by maximising IoU')
     args = ap.parse_args()
 
     fps = args.fps if args.fps else get_video_fps(args.pred)
@@ -225,9 +225,9 @@ def main():
 
         # Auto-find best offset (0.0 to 5.0s in 0.1s steps) if --pred-offset-auto is set
         if args.pred_offset_auto:
-            print("[offset] Searching best offset (0.0–5.0s in 0.1s steps)...")
+            print("[offset] Searching best offset (0.0–2.0s in 0.1s steps)...")
             best_iou, best_offset = -1.0, 0
-            max_offset_frames = int(5.0 * fps)
+            max_offset_frames = int(2.0 * fps)
             for off_f in range(0, max_offset_frames + 1, max(1, int(0.1 * fps))):
                 gm, pm, _, _ = _align_with_offset(off_f)
                 iou = np.mean([
@@ -431,8 +431,10 @@ def main():
         lf.write(f"{'='*52}\n")
         lf.write(f"  GT   : {args.gt}\n")
         lf.write(f"  Pred : {args.pred}\n")
-        if args.pred_offset_seconds:
-            lf.write(f"  Pred offset : {args.pred_offset_seconds}s\n")
+        if args.pred_offset_auto:
+            lf.write(f"  Pred offset : {pred_offset_frames/fps:.1f}s ({pred_offset_frames} frames) — auto\n")
+        elif args.pred_offset_seconds:
+            lf.write(f"  Pred offset : {args.pred_offset_seconds}s — manual\n")
         if args.max_seconds:
             lf.write(f"  Max seconds : {args.max_seconds}s\n")
         lf.write(f"  Frames compared : {n}  ({n/fps:.1f}s at {fps:.1f} FPS)\n")
@@ -477,6 +479,10 @@ def main():
         cf.write(f"  DATE      : {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         cf.write(f"  MODEL     : {model_name}\n")
         cf.write(f"  GT        : {os.path.basename(args.gt)}\n")
+        if args.pred_offset_auto:
+            cf.write(f"  OFFSET    : {pred_offset_frames/fps:.1f}s — auto\n")
+        elif args.pred_offset_seconds:
+            cf.write(f"  OFFSET    : {args.pred_offset_seconds}s — manual\n")
         cf.write(f"  FRAMES    : {n}  ({n/fps:.1f}s at {fps:.1f} FPS)\n")
         cf.write(f"{'='*52}\n")
         cf.write(f"  DETECTION & MASK QUALITY\n")

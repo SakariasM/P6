@@ -1,30 +1,34 @@
 #!/bin/bash
 # Usage:
-#   ./stream.sh video.mp4              — auto-detect FPS from the video
-#   ./stream.sh video.mp4 --fps 30     — override FPS
-#   ./stream.sh video.mp4 --debug      — also save debug overlay video to PC
+#   ./stream.sh video.mp4                          — auto-detect FPS from the video
+#   ./stream.sh video.mp4 --fps 30                 — override FPS
+#   ./stream.sh video.mp4 --debug                  — also save debug overlay video to PC
+#   ./stream.sh video.mp4 --model path/to/model.tflite  — upload model to Pi and switch to it
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FFMPEG="${FFMPEG:-ffmpeg}"
 FFPROBE="${FFPROBE:-ffprobe}"
 PI="sw6@192.168.10.3"
+PI_PROJECT="~/Project/Prototype/P6"
 RUN_DIR="$ROOT_DIR/runs/stream/$(date +%Y%m%d-%H%M%S)"
 
 VIDEO=""
 FPS=""
 DEBUG=""
+MODEL_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --fps)   FPS="$2"; shift 2 ;;
         --debug) DEBUG="1"; shift ;;
+        --model) MODEL_PATH="$2"; shift 2 ;;
         *)       VIDEO="$1"; shift ;;
     esac
 done
 
 if [[ -z "$VIDEO" ]]; then
-    echo "Usage: $0 <video> [--fps N] [--debug]"
+    echo "Usage: $0 <video> [--fps N] [--debug] [--model path/to/model.tflite]"
     exit 1
 fi
 
@@ -50,6 +54,26 @@ fi
 
 DEBUG_ARG=""
 [[ -n "$DEBUG" ]] && DEBUG_ARG="--debug"
+
+# -- model upload --
+if [[ -n "$MODEL_PATH" ]]; then
+    if [[ ! -f "$MODEL_PATH" ]]; then
+        echo "Error: model not found: $MODEL_PATH"
+        exit 1
+    fi
+    MODEL_FILENAME=$(basename "$MODEL_PATH")
+    MODEL_NAME="${MODEL_FILENAME%.tflite}"
+    MODEL_NAME="${MODEL_NAME%_float32}"
+    PI_MODEL_DIR="$PI_PROJECT/models/$MODEL_NAME"
+
+    echo "[stream] Uploading model: $MODEL_FILENAME -> Pi:$PI_MODEL_DIR/"
+    ssh "$PI" "mkdir -p $PI_MODEL_DIR"
+    scp "$MODEL_PATH" "$PI:$PI_MODEL_DIR/${MODEL_NAME}_float32.tflite"
+
+    echo "[stream] Switching Pi to model: $MODEL_NAME"
+    ssh "$PI" "sed -i 's/^MODEL          = .*/MODEL          = \"$MODEL_NAME\"/' $PI_PROJECT/live_mask.py"
+    echo "[stream] Model set."
+fi
 
 echo "[stream] Killing any leftover processes on Pi..."
 ssh "$PI" "pkill -f live_mask.py; pkill -f run_benchmark.sh; sleep 1"
