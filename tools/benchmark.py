@@ -225,10 +225,14 @@ def main():
 
         # Auto-find best offset (0.0 to 5.0s in 0.1s steps) if --pred-offset-auto is set
         if args.pred_offset_auto:
-            print("[offset] Searching best offset (0.0–2.0s in 0.1s steps)...")
             best_iou, best_offset = -1.0, 0
             max_offset_frames = int(2.0 * fps)
-            for off_f in range(0, max_offset_frames + 1, max(1, int(0.1 * fps))):
+            steps = list(range(0, max_offset_frames + 1, max(1, int(0.1 * fps))))
+            total_steps = len(steps)
+            for step_i, off_f in enumerate(steps):
+                pct = (step_i + 1) / total_steps
+                bar = "█" * int(pct * 20) + "░" * (20 - int(pct * 20))
+                print(f"\r[offset] [{bar}] {step_i+1}/{total_steps}  {off_f/fps:.1f}s", end="", flush=True)
                 gm, pm, _, _ = _align_with_offset(off_f)
                 iou = np.mean([
                     (np.logical_and(g, p).sum() / np.logical_or(g, p).sum())
@@ -237,6 +241,7 @@ def main():
                 ])
                 if iou > best_iou:
                     best_iou, best_offset = iou, off_f
+            print()
             pred_offset_frames = best_offset
             print(f"[offset] Best offset: {best_offset/fps:.1f}s ({best_offset} frames) — IoU {best_iou:.4f}")
         else:
