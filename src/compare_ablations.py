@@ -127,11 +127,11 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
         if ax_iou is not None:
             iou_vals = [e.get("val_iou", 0.0) for e in history]
             if any(v > 0 for v in iou_vals):
-                ax_iou.plot(epochs, iou_vals, marker="o", markersize=3, label=label)
+                ax_iou.plot(epochs, iou_vals, marker="o", markersize=2, label=label)
 
             dice_vals = [e.get("val_dice", 0.0) for e in history]
             if any(v > 0 for v in dice_vals):
-                ax_dice.plot(epochs, dice_vals, marker="o", markersize=3, label=label)
+                ax_dice.plot(epochs, dice_vals, marker="o", markersize=2, label=label)
 
         has_val = "val_total" in history[0]
         if has_val:
@@ -155,28 +155,32 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
         ax_iou.set_xlabel("Epoch")
         ax_iou.set_ylabel("IoU")
         ax_iou.set_title(f"Validation IoU by Layer Configuration{title_suffix}")
-        ax_iou.legend(fontsize=7, loc="lower right")
+        ax_iou.legend(fontsize=13, loc="lower right")
         ax_iou.grid(True, alpha=0.3)
-        ax_iou.set_ylim(0.5, 1)
+        ax_iou.set_yscale("logit")
+        ax_iou.set_ylim(0.5, 0.95)
 
         ax_dice.set_xlabel("Epoch")
         ax_dice.set_ylabel("Dice")
         ax_dice.set_title(f"Validation Dice by Layer Configuration{title_suffix}")
-        ax_dice.legend(fontsize=7, loc="lower right")
+        ax_dice.legend(fontsize=13, loc="lower right")
         ax_dice.grid(True, alpha=0.3)
-        ax_dice.set_ylim(0.7, 1)
+        ax_dice.set_yscale("logit")
+        ax_dice.set_ylim(0.7, 0.98)
 
     ax_total.set_xlabel("Epoch")
     ax_total.set_ylabel("Loss")
     ax_total.set_title(f"Validation Total Loss by Layer Configuration{title_suffix}")
-    ax_total.legend(fontsize=7, loc="upper right")
+    ax_total.legend(fontsize=13, loc="upper right")
     ax_total.grid(True, alpha=0.3)
+    ax_total.set_yscale("log")
 
     ax_seg.set_xlabel("Epoch")
     ax_seg.set_ylabel("Loss")
     ax_seg.set_title(f"Validation Segmentation Loss by Layer Configuration{title_suffix}")
-    ax_seg.legend(fontsize=7, loc="upper right")
+    ax_seg.legend(fontsize=13, loc="upper right")
     ax_seg.grid(True, alpha=0.3)
+    ax_seg.set_yscale("log")
 
     plt.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -202,8 +206,9 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
     ax_seg2.set_xlabel("Epoch")
     ax_seg2.set_ylabel("Loss")
     ax_seg2.set_title(f"Validation Segmentation Loss by Layer Configuration{title_suffix}")
-    ax_seg2.legend(fontsize=7, loc="upper right")
+    ax_seg2.legend(fontsize=13, loc="upper right")
     ax_seg2.grid(True, alpha=0.3)
+    ax_seg2.set_yscale("log")
     fig_seg.tight_layout()
     seg_path = output.with_stem(output.stem + "_seg_loss")
     fig_seg.savefig(seg_path, dpi=150)
@@ -261,8 +266,9 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
     ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU{title_suffix}")
-    ax.legend(fontsize=7, loc="upper right")
+    ax.legend(fontsize=13, loc="upper right")
     ax.grid(True, alpha=0.3)
+    ax.set_yscale("log")
     fig.tight_layout()
     top_path = output.with_stem(output.stem + "_top_bottom")
     fig.savefig(top_path, dpi=150)
