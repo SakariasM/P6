@@ -78,8 +78,11 @@ fi
 echo "[stream] Killing any leftover processes on Pi..."
 ssh "$PI" "pkill -f live_mask.py; pkill -f run_benchmark.sh; sleep 1"
 
+MY_IP=$(ip -4 addr show | grep -oP '192\.168\.10\.\d+' | head -1)
+DEST_DIR="$USER@$MY_IP:$ROOT_DIR/data/preds"
+
 echo "[stream] Starting benchmark on Pi (--fps $FPS${DEBUG:+ --debug})..."
-ssh "$PI" "nohup bash -c 'cd ~/Project/Prototype/P6 && ./run_benchmark.sh --fps $FPS $DEBUG_ARG > /tmp/benchmark_out.txt 2>&1' > /dev/null 2>&1 < /dev/null &"
+ssh "$PI" "nohup bash -c 'cd ~/Project/Prototype/P6 && ./run_benchmark.sh --fps $FPS --dest \"$DEST_DIR\" $DEBUG_ARG > /tmp/benchmark_out.txt 2>&1' > /dev/null 2>&1 < /dev/null &"
 
 echo "[stream] Waiting 5s for Pi model to load..."
 sleep 5
@@ -96,6 +99,24 @@ sleep 15
 
 echo "[stream] Fetching Pi log..."
 scp "$PI:/tmp/benchmark_out.txt" "$RUN_DIR/pi_run.log" 2>/dev/null || true
+
+echo "[stream] Fetching pred mask from Pi..."
+PRED_DIR="$ROOT_DIR/data/preds"
+mkdir -p "$PRED_DIR"
+PRED_FILES=$(ssh "$PI" "ls /tmp/pred_mask_tmp.mp4 /tmp/pred_mask_tmp_timestamps.csv /tmp/stream_start_time.txt 2>/dev/null")
+if [[ -n "$PRED_FILES" ]]; then
+    MODEL_NAME=$(ssh "$PI" "grep '^MODEL ' ~/Project/Prototype/P6/live_mask.py | head -1 | sed 's/.*= *\"\(.*\)\".*/\1/'")
+    RES=$(ssh "$PI" "ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 /tmp/pred_mask_tmp.mp4 2>/dev/null | tr ',' 'x'")
+    [[ -z "$RES" ]] && RES="unknown"
+    FILENAME="pred_mask_${MODEL_NAME}_${RES}.mp4"
+    scp "$PI:/tmp/pred_mask_tmp.mp4" "$PRED_DIR/$FILENAME"
+    scp "$PI:/tmp/pred_mask_tmp_timestamps.csv" "$PRED_DIR/${FILENAME%.mp4}_timestamps.csv" 2>/dev/null
+    scp "$PI:/tmp/stream_start_time.txt" "$PRED_DIR/${FILENAME%.mp4}_stream_start.txt" 2>/dev/null
+    scp "$PI:~/Project/Prototype/P6/run_log.txt" "$PRED_DIR/${FILENAME%.mp4}_run_log.txt" 2>/dev/null
+    echo "[stream] Pred mask saved: $PRED_DIR/$FILENAME"
+else
+    echo "[stream] No pred mask found on Pi"
+fi
 
 if [[ -n "$DEBUG" ]]; then
     echo "[stream] Fetching debug video from Pi..."
