@@ -207,8 +207,9 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
         if not history:
             continue
         epochs = [e["epoch"] for e in history]
-        layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
-        label = f"{name} ({', '.join(layers_display)})"
+        iou_vals = [e.get("val_iou", 0.0) for e in history]
+        best_iou = max(iou_vals) if any(v > 0 for v in iou_vals) else 0.0
+        label = f"{name} — Best IoU = {best_iou:.4f}"
         has_val = "val_total" in history[0]
         if has_val:
             val_segs = [e.get("val_segmentation", 0.0) for e in history]
