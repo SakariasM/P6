@@ -19,6 +19,7 @@ test_data/*
 *.ipynb_checkpoints
 
 # Data and models
+claude.md
 checkpoints/
 logs/
 *.pth

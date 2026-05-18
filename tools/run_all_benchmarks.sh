@@ -16,16 +16,32 @@ GT="$ROOT_DIR/data/gt/gt_mask final 1_40s.mp4"
 VIDEO="$ROOT_DIR/data/gt/test_footage_40s_720p_30fps.mp4"
 
 MODELS=(
+    # CBAM (legacy)
+    "models/legacy/student_seg_all_5_c3k2_320.tflite"
+    "models/legacy/student_seg_backbone_3_320.tflite"
+    "models/legacy/student_seg_backbone_plus_neck1_c3k2_320.tflite"
+    "models/legacy/student_seg_backbone_plus_neck2_c3k2_320.tflite"
     "models/legacy/student_seg_deep_only_320.tflite"
     "models/legacy/student_seg_deep_plus_neck_c3k2_320.tflite"
     "models/legacy/student_seg_mid_deep_320.tflite"
     "models/legacy/student_seg_mid_only_320.tflite"
+    "models/legacy/student_seg_neck1_c3k2_only_320.tflite"
+    "models/legacy/student_seg_neck2_c3k2_only_320.tflite"
     "models/legacy/student_seg_shallow_deep_320.tflite"
     "models/legacy/student_seg_shallow_only_320.tflite"
+    # No CBAM (scratch)
+    "models/no_cbam/student_seg_all_5_c3k2_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_backbone_3_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_backbone_plus_neck1_c3k2_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_backbone_plus_neck2_c3k2_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_deep_only_no_cbam_enc0_scratch_320.tflite"
     "models/no_cbam/student_seg_deep_plus_neck_c3k2_no_cbam_enc0_scratch_320.tflite"
     "models/no_cbam/student_seg_mid_deep_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_mid_only_no_cbam_enc0_scratch_320.tflite"
     "models/no_cbam/student_seg_neck1_c3k2_only_no_cbam_enc0_scratch_320.tflite"
     "models/no_cbam/student_seg_neck2_c3k2_only_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_shallow_deep_no_cbam_enc0_scratch_320.tflite"
+    "models/no_cbam/student_seg_shallow_only_no_cbam_enc0_scratch_320.tflite"
 )
 
 cd "$ROOT_DIR"
@@ -64,5 +80,6 @@ done
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  All $TOTAL models done. Results in logs/benchmark_logs.txt"
+echo "  All $TOTAL models done. Results in logs/benchmark_logs.txt
+"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
