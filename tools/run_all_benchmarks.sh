@@ -12,8 +12,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEBUG=""
 [[ "$1" == "--debug" ]] && DEBUG="--debug"
 
-GT="$ROOT_DIR/data/gt/gt_mask final 1_40s.mp4"
-VIDEO="$ROOT_DIR/data/gt/test_footage_40s_720p_30fps.mp4"
+GT="$ROOT_DIR/data/gt/gt_mask_room.mp4"
+VIDEO="$ROOT_DIR/data/gt/raw_room.avi"
 
 MODELS=(
     # CBAM (legacy)

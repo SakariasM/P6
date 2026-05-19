@@ -1,0 +1,36 @@
+\begin{table}[ht]
+\begin{center}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{l cc cc cc cc}
+\toprule
+\multirow{2}{*}{\textbf{Blocks}}
+  & \multicolumn{2}{c}{\textbf{mAP@50-95}}
+  & \multicolumn{2}{c}{\textbf{mAP@50}}
+  & \multicolumn{2}{c}{\textbf{mAP\textsubscript{L}}}
+  & \multicolumn{2}{c}{\textbf{mAP\textsubscript{S}}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+  & C & N & C & N & C & N & C & N \\
+\midrule
+YOLO26n-seg & \multicolumn{2}{c}{.094} & \multicolumn{2}{c}{.189} & \multicolumn{2}{c}{.311} & \multicolumn{2}{c}{.001} \\
+\midrule
+4                & .120 & .118 & .250 & .241 & .258 & .252 & .021 & .019 \\
+6                & .125 & .120 & \textbf{.256} & .247 & .270 & .253 & \textbf{.024} & .023 \\
+9                & .126 & .119 & .255 & .246 & .269 & .259 & .023 & .021 \\
+\midrule
+13               & .119 & .116 & .249 & .242 & .262 & .252 & .020 & .022 \\
+16               & .119 & .119 & .245 & .252 & .257 & .252 & .021 & \textbf{.025} \\
+4+9              & \textbf{.126} & .124 & .253 & .253 & .272 & .262 & .023 & .024 \\
+6+9              & .104 & .120 & .220 & .246 & .230 & .258 & .016 & .025 \\
+\midrule
+4+6+9            & .100 & .116 & .215 & .245 & .215 & .251 & .016 & .021 \\
+9+13+16          & .122 & .123 & .251 & .251 & .267 & .265 & .020 & .022 \\
+4+6+9+13         & .112 & .114 & .241 & .234 & .245 & .251 & .021 & .019 \\
+4+6+9+16         & .112 & .110 & .231 & .237 & .252 & .228 & .017 & .020 \\
+\midrule
+4+6+9+13+16      & .125 & \textbf{.129} & .251 & \textbf{.258} & \textbf{.283} & \textbf{.283} & .022 & .024 \\
+\bottomrule
+\multicolumn{9}{l}{\scriptsize C\,=\,CBAM,\ N\,=\,No CBAM,\ L\,=\,Large\,($>$96\textsuperscript{2}px),\ S\,=\,Small\,($<$32\textsuperscript{2}px)}
+\end{tabular}
+\end{center}
+\end{table}

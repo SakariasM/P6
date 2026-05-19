@@ -1,0 +1,82 @@
+% ============================================================
+%  TABLE 1 — Simplified (4 key metrics)
+% ============================================================
+
+\begin{table*}[ht]
+\begin{center}
+\begin{tabular}{l cc cc cc cc}
+\toprule
+\multirow{2}{*}{\textbf{Blocks}}
+  & \multicolumn{2}{c}{\textbf{mAP@50}}
+  & \multicolumn{2}{c}{\textbf{Mean IoU}}
+  & \multicolumn{2}{c}{\textbf{Missed (\%)}}
+  & \multicolumn{2}{c}{\textbf{MOTA}} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+  & CBAM & No CBAM & CBAM & No CBAM & CBAM & No CBAM & CBAM & No CBAM \\
+\midrule
+YOLO26n-seg & \multicolumn{2}{c}{0.0563} & \multicolumn{2}{c}{0.2249} & \multicolumn{2}{c}{16.1} & \multicolumn{2}{c}{0.8447} \\
+\midrule
+4                & 0.4725          & \textbf{0.4740} & 0.3890          & \textbf{0.3922} & 17.3          & 15.9          & 0.8309          & 0.8432          \\
+6                & 0.4683          & 0.4471          & 0.3890          & 0.3818          & 16.0          & 16.0          & 0.8432          & 0.8428          \\
+9                & 0.4711          & 0.4626          & 0.3865          & 0.3873          & 17.0          & 17.0          & 0.8325          & 0.8336          \\
+\midrule
+13               & \textbf{0.4873} & 0.4805          & \textbf{0.3964} & 0.3810          & 16.5          & \textbf{5.1}  & 0.8389          & \textbf{0.9379} \\
+16               & 0.4722          & 0.4564          & 0.3917          & 0.3884          & 14.9          & 15.9          & 0.8528          & 0.8422          \\
+4+9              & 0.4725          & 0.4607          & 0.3890          & 0.3879          & 16.8          & 15.9          & 0.8335          & 0.8439          \\
+6+9              & 0.4584          & 0.4689          & 0.3328          & 0.3883          & \textbf{3.3}  & 16.9          & \textbf{0.9139} & 0.8352          \\
+\midrule
+4+6+9            & 0.4607          & 0.4607          & 0.3632          & 0.3872          & 14.0          & 17.1          & 0.8390          & 0.8337          \\
+9+13+16          & 0.4776          & 0.4663          & 0.3869          & 0.3872          & 14.8          & 15.6          & 0.8506          & 0.8455          \\
+4+6+9+13         & 0.4580          & 0.4499          & 0.3912          & 0.3885          & 15.6          & 16.9          & 0.8464          & 0.8342          \\
+4+6+9+16         & 0.4561          & 0.4677          & 0.3888          & 0.3909          & 16.7          & 16.6          & 0.8348          & 0.8363          \\
+\midrule
+4+6+9+13+16      & 0.4810          & 0.4657          & 0.3949          & 0.3845          & 16.6          & 16.4          & 0.8373          & 0.8383          \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table*}
+
+% ============================================================
+%  TABLE 2 — Comprehensive (all important metrics)
+% ============================================================
+
+\begin{table*}[ht]
+\begin{center}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l cc cc cc cc cc cc cc cc}
+\toprule
+\multirow{2}{*}{\textbf{Blocks}}
+  & \multicolumn{2}{c}{\textbf{mAP@50}}
+  & \multicolumn{2}{c}{\textbf{IoU}}
+  & \multicolumn{2}{c}{\textbf{Prec.}}
+  & \multicolumn{2}{c}{\textbf{Recall}}
+  & \multicolumn{2}{c}{\textbf{Missed}}
+  & \multicolumn{2}{c}{\textbf{F.Alarm}}
+  & \multicolumn{2}{c}{\textbf{Flicker}}
+  & \multicolumn{2}{c}{\textbf{Thermal}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}
+\cmidrule(lr){10-11}\cmidrule(lr){12-13}\cmidrule(lr){14-15}\cmidrule(lr){16-17}
+  & C & N & C & N & C & N & C & N & C & N & C & N & C & N & C & N \\
+\midrule
+YOLO26n-seg & \multicolumn{2}{c}{.056} & \multicolumn{2}{c}{.225} & \multicolumn{2}{c}{.382} & \multicolumn{2}{c}{.740} & \multicolumn{2}{c}{16.1} & \multicolumn{2}{c}{5} & \multicolumn{2}{c}{7} & \multicolumn{2}{c}{-0.7} \\
+\midrule
+4           & .473 & \textbf{.474} & .389 & \textbf{.392} & \textbf{.581} & .572          & .567          & \textbf{.574} & 17.3          & 15.9          & 11          & 13          & 0 & 0 & +0.7 & +0.4 \\
+6           & .468 & .447          & .389 & .382          & .569          & .565          & .565          & .562          & 16.0          & 16.0          & 11          & 11          & 0 & 0 & +0.9 & +0.8 \\
+9           & .471 & .463          & .387 & .387          & .576          & .577          & .571          & .567          & 17.0          & 17.0          & 12          & 11          & 1 & 1 & +0.8 & +0.9 \\
+\midrule
+13          & \textbf{.487} & .481 & \textbf{.396} & .381 & .580          & .460          & .570          & .563          & 16.5          & \textbf{5.1}  & \textbf{9}  & 26          & 2 & 6 & +0.6 & +0.6 \\
+16          & .472 & .456          & .392 & .388          & .559          & .572          & .572          & .567          & 14.9          & 15.9          & 13          & 14          & 0 & 0 & +0.6 & +0.9 \\
+4+9         & .473 & .461          & .389 & .388          & .576          & .570          & .568          & .565          & 16.8          & 15.9          & 14          & 11          & 1 & 0 & +0.8 & +0.3 \\
+6+9         & .458 & .469          & .333 & .388          & .392          & .578          & .569          & .563          & \textbf{3.3}  & 16.9          & 103         & 10          & 4 & 0 & +0.1 & +1.0 \\
+\midrule
+4+6+9       & .461 & .461          & .363 & .387          & .528          & .578          & .563          & .568          & 14.0          & 17.1          & 53          & \textbf{9}  & 1 & 0 & +0.7 & +0.4 \\
+9+13+16     & .478 & .466          & .387 & .387          & .552          & .563          & \textbf{.586} & \textbf{.576} & 14.8          & 15.6          & 18          & 13          & 0 & 1 & +0.6 & +0.8 \\
+4+6+9+13    & .458 & .450          & .391 & .389          & .575          & \textbf{.580} & .564          & .562          & 15.6          & 16.9          & 11          & 11          & 0 & 1 & +0.6 & +1.1 \\
+4+6+9+16    & .456 & .468          & .389 & .391          & .579          & \textbf{.580} & .562          & .561          & 16.7          & 16.6          & 14          & 12          & 2 & 2 & +1.0 & +1.4 \\
+\midrule
+4+6+9+13+16 & .481 & .466          & .395 & .385          & .580          & .567          & .569          & .569          & 16.6          & 16.4          & 11          & 12          & 1 & 0 & +0.9 & +0.7 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table*}

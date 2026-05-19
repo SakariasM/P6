@@ -21,7 +21,6 @@ test_data/*
 # Data and models
 claude.md
 checkpoints/
-logs/
 *.pth
 *.pt
 # IDE
