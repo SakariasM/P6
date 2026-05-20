@@ -42,6 +42,11 @@ def _setup_epoch_axis(ax):
 SCRATCH_SUFFIX = "_no_cbam_enc0_scratch"
 
 
+def _layers_label(cfg: dict) -> str:
+    nums = [l.replace("model.", "") for l in cfg["teacher_layers"]]
+    return ", ".join(nums)
+
+
 def load_config(config_path: Path) -> dict[str, dict]:
     with open(config_path) as f:
         return json.load(f)
@@ -133,8 +138,7 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
         has_any_data = True
 
         epochs = [e["epoch"] for e in history]
-        layers_display = [l.replace("model.", "block.") for l in cfg['teacher_layers']]
-        label = f"{name} ({', '.join(layers_display)})"
+        label = _layers_label(cfg)
 
         if ax_iou is not None:
             iou_vals = [e.get("val_iou", 0.0) for e in history]
@@ -209,7 +213,7 @@ def plot_comparison(configs: dict[str, dict], base_dir: Path, output: Path,
         epochs = [e["epoch"] for e in history]
         iou_vals = [e.get("val_iou", 0.0) for e in history]
         best_iou = max(iou_vals) if any(v > 0 for v in iou_vals) else 0.0
-        label = f"{name} — Best IoU = {best_iou:.4f}"
+        label = f"{_layers_label(cfg)} — Best IoU = {best_iou:.4f}"
         has_val = "val_total" in history[0]
         if has_val:
             val_segs = [e.get("val_segmentation", 0.0) for e in history]
@@ -263,7 +267,7 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
         val_segs = [e.get("val_segmentation", 0.0) for e in history]
         if not any(v > 0 for v in val_segs):
             continue
-        label = f"{name} — Best IoU = {best_iou:.4f}"
+        label = f"{_layers_label(cfg)} — Best IoU = {best_iou:.4f}"
         if name in best_names:
             color = colors_best[best_idx % len(colors_best)]
             best_idx += 1
