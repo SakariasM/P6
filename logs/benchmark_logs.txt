@@ -3304,3 +3304,687 @@
   Thermal degradation   : +0.4%  (12.6 → 12.6 FPS)
 ====================================================
 
+
+====================================================
+  DATE      : 2026-05-19 09:35:18
+  MODEL     : student_seg_shallow_deep_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3815  (152.6s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6847
+  Pixel Coverage        : 82.8%
+  Mean Recall           : 0.8334
+  Mean Precision        : 0.7946
+  Mean F1               : 0.8039
+  mAP@50                : 0.9318
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.9343  (3683 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 5
+  Temporal IoU Std Dev  : 0.1222
+  MOTA (simplified)     : 0.9948
+  Missed detections     : 15 / 3693 (0.4%)
+  False alarms          : 5 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 12.6
+  Peak / Min FPS        : 12.8 / 12.3  (momentary)
+  Thermal degradation   : -0.2%  (12.6 → 12.6 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:38:40
+  MODEL     : student_seg_shallow_only_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3808  (152.3s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6493
+  Pixel Coverage        : 82.6%
+  Mean Recall           : 0.8317
+  Mean Precision        : 0.7418
+  Mean F1               : 0.7773
+  mAP@50                : 0.8561
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8584  (3679 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 1
+  Temporal IoU Std Dev  : 0.1302
+  MOTA (simplified)     : 0.9934
+  Missed detections     : 25 / 3689 (0.7%)
+  False alarms          : 0 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 12.6
+  Peak / Min FPS        : 12.8 / 12.2  (momentary)
+  Thermal degradation   : -0.4%  (12.6 → 12.6 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:41:57
+  MODEL     : student_seg_all_5_c3k2_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3806  (152.2s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6538
+  Pixel Coverage        : 85.4%
+  Mean Recall           : 0.8588
+  Mean Precision        : 0.7263
+  Mean F1               : 0.7815
+  mAP@50                : 0.8728
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8752  (3678 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.1252
+  MOTA (simplified)     : 0.9958
+  Missed detections     : 16 / 3688 (0.4%)
+  False alarms          : 0 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 11.6
+  Peak / Min FPS        : 11.8 / 11.4  (momentary)
+  Thermal degradation   : -0.5%  (11.7 → 11.6 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:45:20
+  MODEL     : student_seg_backbone_3_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3815  (152.6s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6977
+  Pixel Coverage        : 86.4%
+  Mean Recall           : 0.8682
+  Mean Precision        : 0.7807
+  Mean F1               : 0.8161
+  mAP@50                : 0.9632
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.9658  (3683 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.0998
+  MOTA (simplified)     : 0.9961
+  Missed detections     : 15 / 3693 (0.4%)
+  False alarms          : 0 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.4 / 13.0  (momentary)
+  Thermal degradation   : +0.7%  (13.2 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:48:42
+  MODEL     : student_seg_backbone_plus_neck1_c3k2_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3817  (152.7s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.7073
+  Pixel Coverage        : 87.2%
+  Mean Recall           : 0.8763
+  Mean Precision        : 0.7868
+  Mean F1               : 0.8225
+  mAP@50                : 0.9732
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.9758  (3685 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 4
+  Temporal IoU Std Dev  : 0.1014
+  MOTA (simplified)     : 0.9961
+  Missed detections     : 15 / 3695 (0.4%)
+  False alarms          : 0 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.5 / 12.9  (momentary)
+  Thermal degradation   : -0.4%  (13.3 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:52:12
+  MODEL     : student_seg_backbone_plus_neck2_c3k2_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3811  (152.4s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6409
+  Pixel Coverage        : 81.5%
+  Mean Recall           : 0.8209
+  Mean Precision        : 0.7410
+  Mean F1               : 0.7694
+  mAP@50                : 0.8420
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8443  (3681 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 2
+  Temporal IoU Std Dev  : 0.1325
+  MOTA (simplified)     : 0.9898
+  Missed detections     : 18 / 3691 (0.5%)
+  False alarms          : 21 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.4 / 12.4  (momentary)
+  Thermal degradation   : -0.1%  (13.3 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:55:29
+  MODEL     : student_seg_deep_only_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3813  (152.5s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6792
+  Pixel Coverage        : 85.1%
+  Mean Recall           : 0.8555
+  Mean Precision        : 0.7665
+  Mean F1               : 0.8021
+  mAP@50                : 0.9442
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.9468  (3684 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.1077
+  MOTA (simplified)     : 0.9958
+  Missed detections     : 16 / 3694 (0.4%)
+  False alarms          : 0 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.4 / 13.0  (momentary)
+  Thermal degradation   : -0.4%  (13.3 → 13.2 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 09:58:46
+  MODEL     : student_seg_deep_plus_neck_c3k2_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3810  (152.4s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6272
+  Pixel Coverage        : 79.3%
+  Mean Recall           : 0.7992
+  Mean Precision        : 0.7388
+  Mean F1               : 0.7582
+  mAP@50                : 0.8130
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8152  (3680 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 2
+  Temporal IoU Std Dev  : 0.1377
+  MOTA (simplified)     : 0.9898
+  Missed detections     : 19 / 3690 (0.5%)
+  False alarms          : 20 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.5 / 13.0  (momentary)
+  Thermal degradation   : +0.1%  (13.3 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:02:05
+  MODEL     : student_seg_mid_deep_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3810  (152.4s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6330
+  Pixel Coverage        : 80.5%
+  Mean Recall           : 0.8114
+  Mean Precision        : 0.7364
+  Mean F1               : 0.7634
+  mAP@50                : 0.8203
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8226  (3680 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 2
+  Temporal IoU Std Dev  : 0.1355
+  MOTA (simplified)     : 0.9919
+  Missed detections     : 17 / 3690 (0.5%)
+  False alarms          : 14 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.4 / 12.9  (momentary)
+  Thermal degradation   : -0.7%  (13.3 → 13.2 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:05:22
+  MODEL     : student_seg_mid_only_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3816  (152.6s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6765
+  Pixel Coverage        : 85.1%
+  Mean Recall           : 0.8558
+  Mean Precision        : 0.7619
+  Mean F1               : 0.7976
+  mAP@50                : 0.9226
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.9251  (3684 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 2
+  Temporal IoU Std Dev  : 0.1177
+  MOTA (simplified)     : 0.9898
+  Missed detections     : 18 / 3694 (0.5%)
+  False alarms          : 21 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.2
+  Peak / Min FPS        : 13.4 / 13.0  (momentary)
+  Thermal degradation   : +0.1%  (13.2 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:08:43
+  MODEL     : student_seg_neck1_c3k2_only_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3809  (152.4s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6382
+  Pixel Coverage        : 82.7%
+  Mean Recall           : 0.8323
+  Mean Precision        : 0.7256
+  Mean F1               : 0.7677
+  mAP@50                : 0.8379
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8402  (3680 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.1313
+  MOTA (simplified)     : 0.9911
+  Missed detections     : 14 / 3690 (0.4%)
+  False alarms          : 20 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.4 / 13.0  (momentary)
+  Thermal degradation   : +0.3%  (13.2 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:12:06
+  MODEL     : student_seg_neck2_c3k2_only_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3809  (152.4s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6249
+  Pixel Coverage        : 79.8%
+  Mean Recall           : 0.8042
+  Mean Precision        : 0.7325
+  Mean F1               : 0.7566
+  mAP@50                : 0.8005
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8027  (3680 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.1370
+  MOTA (simplified)     : 0.9898
+  Missed detections     : 19 / 3690 (0.5%)
+  False alarms          : 20 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.3
+  Peak / Min FPS        : 13.4 / 13.1  (momentary)
+  Thermal degradation   : +0.1%  (13.3 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:15:21
+  MODEL     : student_seg_shallow_deep_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3820  (152.8s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.7231
+  Pixel Coverage        : 86.7%
+  Mean Recall           : 0.8714
+  Mean Precision        : 0.8146
+  Mean F1               : 0.8327
+  mAP@50                : 0.9811
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.9837  (3689 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.0919
+  MOTA (simplified)     : 0.9906
+  Missed detections     : 16 / 3699 (0.4%)
+  False alarms          : 20 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.2
+  Peak / Min FPS        : 13.4 / 13.0  (momentary)
+  Thermal degradation   : +0.2%  (13.2 → 13.2 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:18:36
+  MODEL     : student_seg_shallow_only_no_cbam_enc0_scratch_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 1.0s — auto
+  FRAMES    : 3811  (152.4s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.6421
+  Pixel Coverage        : 81.7%
+  Mean Recall           : 0.8224
+  Mean Precision        : 0.7423
+  Mean F1               : 0.7707
+  mAP@50                : 0.8488
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.8511  (3681 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 0
+  Temporal IoU Std Dev  : 0.1302
+  MOTA (simplified)     : 0.9900
+  Missed detections     : 17 / 3691 (0.5%)
+  False alarms          : 21 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 13.2
+  Peak / Min FPS        : 13.4 / 12.9  (momentary)
+  Thermal degradation   : -0.3%  (13.3 → 13.3 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-19 10:49:54
+  MODEL     : yolo26n-seg_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 0.9s — auto
+  FRAMES    : 3822  (152.9s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.4210
+  Pixel Coverage        : 76.4%
+  Mean Recall           : 0.7720
+  Mean Precision        : 0.5497
+  Mean F1               : 0.5675
+  mAP@50                : 0.2084
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.2090  (3680 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 112
+  Temporal IoU Std Dev  : 0.1478
+  MOTA (simplified)     : 0.9144
+  Missed detections     : 320 / 3690 (8.7%)
+  False alarms          : 7 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 18.5
+  Peak / Min FPS        : 19.2 / 15.5  (momentary)
+  Thermal degradation   : -1.8%  (19.0 → 18.6 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-20 08:59:11
+  MODEL     : yolo26n-seg_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 0.9s — auto
+  FRAMES    : 3822  (152.9s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.4210
+  Pixel Coverage        : 76.4%
+  Mean Recall           : 0.7720
+  Mean Precision        : 0.5497
+  Mean F1               : 0.5675
+  mAP@50                : 0.2084
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.2090  (3680 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 112
+  Temporal IoU Std Dev  : 0.1478
+  MOTA (simplified)     : 0.9144
+  Missed detections     : 320 / 3690 (8.7%)
+  False alarms          : 7 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 18.5
+  Peak / Min FPS        : 19.2 / 15.5  (momentary)
+  Thermal degradation   : -1.8%  (19.0 → 18.6 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-20 09:03:01
+  MODEL     : yolo26n-seg_320_720x1280
+  GT        : gt_mask_room.mp4
+  OFFSET    : 0.0s — auto
+  FRAMES    : 1154  (38.5s at 30.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.1917
+  Pixel Coverage        : 30.5%
+  Mean Recall           : 0.4115
+  Mean Precision        : 0.2376
+  Mean F1               : 0.2317
+  mAP@50                : 0.0000
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : 0.0000  (6 frames)
+  mAP@50 medium (5-30%): 0.0000  (373 frames)
+  mAP@50 large   (>30%) : 0.0000  (598 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 3
+  Temporal IoU Std Dev  : 0.0491
+  MOTA (simplified)     : 0.9506
+  Missed detections     : 45 / 977 (4.6%)
+  False alarms          : 12 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 15.1
+  Peak / Min FPS        : 17.1 / 11.0  (momentary)
+  Thermal degradation   : -3.1%  (15.9 → 15.4 FPS)
+====================================================
+
+
+====================================================
+  DATE      : 2026-05-20 09:07:25
+  MODEL     : yolo26n-seg_320_360x288
+  GT        : gt_mask_room.mp4
+  OFFSET    : 0.9s — auto
+  FRAMES    : 3818  (152.7s at 25.0 FPS)
+====================================================
+  DETECTION & MASK QUALITY
+====================================================
+  Mean IoU              : 0.4249
+  Pixel Coverage        : 77.0%
+  Mean Recall           : 0.7779
+  Mean Precision        : 0.5527
+  Mean F1               : 0.5718
+  mAP@50                : 0.2172
+====================================================
+  BY PERSON SIZE
+====================================================
+  mAP@50 small   (<5%) : n/a
+  mAP@50 medium (5-30%): 0.0000  (10 frames)
+  mAP@50 large   (>30%) : 0.2178  (3682 frames)
+====================================================
+  TEMPORAL STABILITY
+====================================================
+  Flickering Events     : 115
+  Temporal IoU Std Dev  : 0.1476
+  MOTA (simplified)     : 0.9151
+  Missed detections     : 319 / 3692 (8.6%)
+  False alarms          : 5 frames
+====================================================
+  PERFORMANCE
+====================================================
+  Mean Seg FPS          : 18.6
+  Peak / Min FPS        : 19.4 / 15.1  (momentary)
+  Thermal degradation   : -2.9%  (19.1 → 18.6 FPS)
+====================================================
+
