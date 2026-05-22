@@ -23,6 +23,7 @@ export PYTHONPATH=src
 
 Download Openimages v7 dataset on their website. Store the data in same folder as the project.
 
+
 ## 1. Extract teacher features
 
 Features are captured with PyTorch forward hooks (`YOLOFeatureExtractor`) on
@@ -48,7 +49,7 @@ The training entry point is `training.hybrid_distillation_train`. Example
 All training, extraction, and benchmarking jobs were run on the AAU AI-LAB
 GPU cluster, scheduled with SLURM and executed inside a Singularity
 (Apptainer) container. The slurm/ directory contains a job script for each
-stage of the pipeline.
+stage of the pipeline. The project uses pytorch_25.12 as the container version.
 
 On SLURM:
 
