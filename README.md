@@ -12,6 +12,7 @@ This repository accompanies our P6 project report (P6.pdf)
 
 Installation:
 bashgit clone <TODO: repo url>
+
 cd <TODO: repo name>
 
 python -m venv venv
@@ -44,32 +45,19 @@ python -m teacher.feature_extractor \
 The training entry point is `training.hybrid_distillation_train`. Example
 (values mirror the SLURM defaults):
 
-```bash
-python -m training.hybrid_distillation_train \
-    --predictions   /path/to/teacher_predictions \
-    --image-root    /path/to/openimages/train/data \
-    --epochs        50 \
-    --batch-size    8 \
-    --lr            1e-4 \
-    --base-channels 8 \
-    --depth         4 \
-    --img-size      640 \
-    --attention-weight 1.0 \
-    --mimicry-weight   2.0 \
-    --relation-weight  1.0 \
-    --seg-weight       0.5 \
-    --grad-clip     1.0 \
-    --val-split     0.1 \
-    --patience      5 \
-    --augment \
-    --teacher-layers model.4 model.6 model.9 \
-    --output-dir    trained_models/student
-```
+All training, extraction, and benchmarking jobs were run on the AAU AI-LAB
+GPU cluster, scheduled with SLURM and executed inside a Singularity
+(Apptainer) container. The slurm/ directory contains a job script for each
+stage of the pipeline.
 
 On SLURM:
 
 ```bash
 sbatch slurm/train_student.slurm
+
+sacct for container info
+
+squeue --me for queue info
 ```
 
 
