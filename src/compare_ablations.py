@@ -254,7 +254,7 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
     selected_names = {r[0] for r in selected}
     best_names = {r[0] for r in rankings[:n_best]}
 
-    fig, ax = plt.subplots(1, 1, figsize=(14, 5))
+    fig, ax = plt.subplots(1, 1, figsize=(14, 6))
     colors_best = ["tab:blue", "tab:green", "tab:orange"]
     colors_worst = ["tab:red", "tab:brown"]
 
@@ -276,13 +276,14 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
             color = colors_worst[worst_idx % len(colors_worst)]
             worst_idx += 1
             linestyle = "--"
-        ax.plot(epochs, val_segs, marker="o", markersize=3,
-                color=color, linestyle=linestyle, label=label)
+        ax.plot(epochs, val_segs, marker="o", markersize=4,
+                color=color, linestyle=linestyle, linewidth=2, label=label)
 
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU{title_suffix}")
-    ax.legend(fontsize=12, loc="upper right")
+    ax.set_xlabel("Epoch", fontsize=16)
+    ax.set_ylabel("Loss", fontsize=16)
+    ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU{title_suffix}", fontsize=18)
+    ax.legend(fontsize=14, loc="upper right")
+    ax.tick_params(axis='both', labelsize=14)
     ax.grid(True, alpha=0.3)
     _setup_epoch_axis(ax)
     fig.tight_layout()
