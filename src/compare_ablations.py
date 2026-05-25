@@ -282,7 +282,7 @@ def plot_top_bottom(configs: dict[str, dict], base_dir: Path, output: Path,
     ax.set_xlabel("Epoch", fontsize=16)
     ax.set_ylabel("Loss", fontsize=16)
     ax.set_title(f"Validation Segmentation Loss — Top {n_best} vs Bottom {n_worst} by IoU{title_suffix}", fontsize=18)
-    ax.legend(fontsize=14, loc="upper right")
+    ax.legend(fontsize=20, loc="upper right")
     ax.tick_params(axis='both', labelsize=14)
     ax.grid(True, alpha=0.3)
     _setup_epoch_axis(ax)
