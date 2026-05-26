@@ -112,15 +112,19 @@ def export_checkpoint(ckpt_path: Path, output_dir: Path, img_size: int,
     ckpt_args = checkpoint.get("args", {})
     base_channels = ckpt_args.get("base_channels", 8)
     depth = ckpt_args.get("depth", 4)
+    cbam_levels = ckpt_args.get("cbam_levels", None)
 
     print(f"  Model config: base_channels={base_channels}, depth={depth}")
     print(f"  Teacher channels: {teacher_channels}")
+    if cbam_levels is not None:
+        print(f"  CBAM levels: {cbam_levels}")
 
     model = StudentSegmentation(
         in_channels=3,
         base_channels=base_channels,
         depth=depth,
         teacher_channels=teacher_channels,
+        cbam_levels=cbam_levels,
     )
     model.load_state_dict(state_dict)
     model.eval()
