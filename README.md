@@ -11,7 +11,7 @@ layers are most useful to distil from.
 This repository accompanies our P6 project report (P6.pdf)
 
 Installation:
-bashgit clone <TODO: repo url>
+bashgit clone https://github.com/SakariasM/P6.git
 
 cd <TODO: repo name>
 
