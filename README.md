@@ -21,3 +21,5 @@ python3 tools/benchmark.py --gt data/gt/gt_mask_1080p_30fps.mp4 --pred data/pred
 ```
 
 See `docs/HOW_TO_RUN.md` for the full workflow.
+
+Test footage can be found at: https://drive.google.com/drive/folders/1zOlQAB28GoOhN5B1zo0Hfur5CpHS1u3X?usp=sharing

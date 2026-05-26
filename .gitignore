@@ -32,6 +32,10 @@ checkpoints/
 *.jpg
 # Documentation (personal reference, not tracked)
 PROJECT_DOCUMENTATION.txt
+*.txt
+*.png
+*.tex
+
 
 # OS
 .DS_Store

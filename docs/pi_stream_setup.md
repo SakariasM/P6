@@ -70,7 +70,3 @@ REVERT PI BACK TO WEBCAM
 sshpass -p 'jFTYQvI88pCnsHXXWHgZ' ssh sw6@192.168.10.3 \
   "sed -i 's/SOURCE         = \"udp:\/\/@:1234\"/SOURCE         = 0/' ~/Project/Prototype/P6/live_mask.py"
 
-
-TEST VIDEO
-----------
-test_footage_40s.mp4 — 3840×2160 @ 60fps, 40s (4K, H.264)
