@@ -11,9 +11,10 @@ layers are most useful to distil from.
 This repository accompanies our P6 project report (P6.pdf)
 
 Installation:
-bashgit clone https://github.com/SakariasM/P6.git
+bash
+git clone https://github.com/SakariasM/P6.git
 
-cd <TODO: repo name>
+cd P6
 
 python -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
